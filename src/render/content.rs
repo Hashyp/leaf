@@ -1,13 +1,17 @@
-use crate::{app::App, markdown::display_width, theme::app_theme};
+use crate::{
+    app::{App, CommentGutterState},
+    markdown::display_width,
+    theme::app_theme,
+};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::Span,
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 
-use super::{CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH};
+use super::{COMMENT_GUTTER_WIDTH, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH};
 
 pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let viewport_height = area.height as usize;
@@ -93,6 +97,31 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
                 line.spans.insert(0, Span::styled(gutter, gutter_style));
             }
         }
+    }
+
+    for (visible_idx, line) in visible_lines.iter_mut().enumerate() {
+        let state = app.comment_gutter_state(scroll + visible_idx);
+        let (symbol, style) = match state {
+            CommentGutterState::Empty => {
+                (" ".repeat(COMMENT_GUTTER_WIDTH as usize), Style::default())
+            }
+            CommentGutterState::Add => (
+                "[+] ".to_string(),
+                Style::default()
+                    .fg(theme.markdown.link_hover)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            CommentGutterState::Comment => {
+                ("●   ".to_string(), Style::default().fg(theme.ui.toc_accent))
+            }
+            CommentGutterState::Active => (
+                "◆   ".to_string(),
+                Style::default()
+                    .fg(theme.ui.toc_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        };
+        line.spans.insert(0, Span::styled(symbol, style));
     }
 
     f.render_widget(

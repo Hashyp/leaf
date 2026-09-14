@@ -103,6 +103,7 @@ impl App {
     pub(crate) fn is_popup_open(&self) -> bool {
         self.help_open
             || self.path_popup_open
+            || self.is_comment_composer_open()
             || self.file_picker.open
             || self.theme_picker.open
             || self.editor_picker.open

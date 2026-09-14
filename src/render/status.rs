@@ -144,6 +144,27 @@ pub(crate) fn status_search_section(app: &App) -> Option<Vec<Span<'static>>> {
     Some(vec![span])
 }
 
+pub(crate) fn status_comment_section(app: &App) -> Option<Vec<Span<'static>>> {
+    let theme = app_theme();
+    if let Some(composer) = app.comment_composer() {
+        return Some(vec![Span::styled(
+            format!(" ✎ line {} ", composer.source_line),
+            Style::default()
+                .fg(theme.ui.status_search_fg)
+                .bg(theme.ui.status_search_bg),
+        )]);
+    }
+    if app.comment_count() == 0 {
+        return None;
+    }
+    Some(vec![Span::styled(
+        format!(" ● {} ", app.comment_count()),
+        Style::default()
+            .fg(theme.ui.status_success_fg)
+            .bg(theme.ui.status_success_bg),
+    )])
+}
+
 pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> {
     let theme = app_theme();
     if app.is_goto_line_mode() {
@@ -180,14 +201,23 @@ pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> 
 }
 
 pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
-    if app.is_goto_line_mode() || app.is_search_mode() {
+    if app.is_comment_composer_open() {
+        &["enter save", "alt+enter newline", "esc cancel"]
+    } else if app.is_goto_line_mode() || app.is_search_mode() {
         &["enter confirm", "esc cancel"]
     } else if app.has_active_goto_line() {
         &["esc cancel"]
     } else if app.has_active_search() {
         &["n/N next/prev", "esc cancel"]
     } else {
-        &["ctrl+e edit", "ctrl+f find", "t toc", "? help", "q quit"]
+        &[
+            "a comment",
+            "ctrl+e edit",
+            "ctrl+f find",
+            "t toc",
+            "? help",
+            "q quit",
+        ]
     }
 }
 
@@ -394,6 +424,10 @@ pub(crate) fn build_status_bar(app: &App, pct: u16) -> Vec<Span<'static>> {
 
     let mut left_section = status_brand_section();
     left_section.extend(status_filename_section(app.filename()));
+
+    if let Some(section) = status_comment_section(app) {
+        left_section.extend(section);
+    }
 
     if let Some(section) = status_search_section(app) {
         left_section.extend(section);

@@ -46,6 +46,7 @@ impl App {
         self.toc_header_line = toc_header_line();
         self.link_spans_by_line = super::links::link_spans_to_map(link_spans);
         self.hovered_link = None;
+        self.hovered_content_line = None;
         self.set_code_blocks(code_blocks);
         self.code_select = None;
         self.set_line_maps(line_number_map, source_line_map);
@@ -106,6 +107,7 @@ impl App {
         );
 
         let first_load = self.filepath.is_none();
+        self.clear_comments_for_document();
         self.filename = filename;
         self.source = src;
         if let Some(n) = self.file_history_length.filter(|n| *n > 0) {

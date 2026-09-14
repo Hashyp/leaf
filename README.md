@@ -333,6 +333,8 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 | `y/Y` / `c/C` | Focus code block | `Ctrl+H` | Open file history picker |
 | `Ctrl+L` / `:` | Go to line | `Ctrl+E` | Open in editor |
 | `Ctrl+F` / `/` | Find | `Ctrl+Click` | Open link |
+| `a` | Comment at hovered / top line | `[` / `]` | Previous / next comment |
+| `e` / `x` | Edit / remove active comment |  |  |
 | `n` / `N` | Next / prev match | `Double-Click` (link) | Copy link |
 | `w` | Toggle watch mode | `Double-Click` (code) | Copy code block |
 | `r` | Force reload (watch mode) | `Shift+Drag` | Select text |
@@ -342,6 +344,7 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 ## Features
 
 - **Live preview** : *Watch mode with automatic reload and visual feedback*.
+- **Review comments (POC)** : *Add, browse, edit, and remove line-level comments in the TUI. Comments are intentionally local to the currently open document and are not persisted*.
 - **File picker** : *Fuzzy Markdown picker, directory browser, and watch after selection*.
 - **File history** : *Recently opened files stored in `history.toml`, picker via `Ctrl+H` or `leaf --history`*.
 - **Editor integration** : *Open the current file in your preferred editor*.

@@ -40,30 +40,35 @@ impl App {
     pub(crate) fn scroll_down(&mut self, n: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.clear_hovered_content_line();
         self.scroll = (self.scroll + n).min(self.max_scroll());
     }
 
     pub(crate) fn scroll_up(&mut self, n: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.clear_hovered_content_line();
         self.scroll = self.scroll.saturating_sub(n);
     }
 
     pub(crate) fn scroll_top(&mut self) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.clear_hovered_content_line();
         self.scroll = 0;
     }
 
     pub(crate) fn scroll_bottom(&mut self) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.clear_hovered_content_line();
         self.scroll = self.max_scroll();
     }
 
     pub(crate) fn scroll_to(&mut self, position: usize) {
         self.reset_numkey_state();
         self.reset_toc_scroll_mode();
+        self.clear_hovered_content_line();
         self.scroll = position.min(self.max_scroll());
     }
 

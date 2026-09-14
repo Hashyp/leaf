@@ -24,6 +24,7 @@ pub(super) fn handle_key_event(
     {
         let in_text_input = app.is_search_mode()
             || app.is_goto_line_mode()
+            || app.is_comment_composer_open()
             || (app.is_file_picker_open() && app.is_fuzzy_file_picker());
         if !in_text_input {
             let now_enabled = app.toggle_mouse_capture();
@@ -37,7 +38,34 @@ pub(super) fn handle_key_event(
     }
 
     let mut state_changed = true;
-    if app.is_help_open() {
+    if app.is_comment_composer_open() {
+        match key.code {
+            KeyCode::Esc => app.cancel_comment(),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.cancel_comment();
+            }
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                app.push_comment_char('\n');
+            }
+            KeyCode::Enter => {
+                app.save_comment();
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.save_comment();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.clear_comment_draft();
+            }
+            KeyCode::Backspace => app.pop_comment_char(),
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                app.push_comment_char(c);
+            }
+            _ => state_changed = false,
+        }
+    } else if app.is_help_open() {
         match key.code {
             KeyCode::Esc | KeyCode::Char('?') => app.close_help(),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -429,6 +457,21 @@ pub(super) fn handle_key_event(
             }
             KeyCode::Char('p') => {
                 app.open_path_popup();
+            }
+            KeyCode::Char('a') => {
+                state_changed = app.begin_comment_at_focus();
+            }
+            KeyCode::Char(']') => {
+                state_changed = app.activate_next_comment();
+            }
+            KeyCode::Char('[') => {
+                state_changed = app.activate_previous_comment();
+            }
+            KeyCode::Char('e') => {
+                state_changed = app.edit_active_comment();
+            }
+            KeyCode::Char('x') => {
+                state_changed = app.remove_active_comment();
             }
             KeyCode::Char('0') => {
                 app.toggle_reverse_mode();

@@ -3,7 +3,9 @@ mod mouse;
 
 use crate::{
     app::{App, FileChange, FLASH_DURATION_MS},
-    render::{ui, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
+    render::{
+        comments_panel_width, ui, COMMENT_GUTTER_WIDTH, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH,
+    },
 };
 use anyhow::Result;
 use crossterm::event::{self, poll, Event, KeyEventKind};
@@ -340,15 +342,18 @@ fn sync_render_width_for_app(
     ss: &SyntaxSet,
     themes: &ThemeSet,
 ) -> bool {
-    let content_width = if app.is_toc_visible() && app.has_toc() {
+    let workspace_width = if app.is_toc_visible() && app.has_toc() {
         area_width.saturating_sub(30)
     } else {
         area_width
     };
+    let panel_width = comments_panel_width(workspace_width, app.has_comments());
+    let content_width = workspace_width.saturating_sub(panel_width);
     let gutter = app.line_number_gutter_width();
     let effective_width = content_width
         .saturating_sub(CONTENT_HORIZONTAL_PADDING as usize * 2)
         .saturating_sub(SCROLLBAR_WIDTH as usize)
+        .saturating_sub(COMMENT_GUTTER_WIDTH as usize)
         .saturating_sub(gutter);
     let capped_width = effective_width.min(app.max_width().unwrap_or(usize::MAX));
     app.sync_render_width(capped_width, ss, themes)

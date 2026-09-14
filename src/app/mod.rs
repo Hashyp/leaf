@@ -55,6 +55,9 @@ mod links;
 
 mod code_blocks;
 
+mod comments;
+pub(crate) use comments::{CommentComposer, CommentGutterState, ReviewComment};
+
 mod io_picker;
 
 mod theme_picker;
@@ -100,6 +103,9 @@ pub(crate) struct StatusCacheKey {
     path_flash_active: bool,
     code_block_flash_active: bool,
     history_flash_active: bool,
+    comment_mode: bool,
+    comment_count: usize,
+    active_comment_id: Option<u64>,
     mouse_capture: bool,
     toc_scroll_hint_visible: bool,
 }
@@ -178,6 +184,11 @@ pub(crate) struct App {
     link_flash: Option<(LinkFlash, Instant)>,
     path_flash: Option<(PathFlash, Instant)>,
     pub(crate) last_click: Option<(u16, u16, Instant)>,
+    pub(super) comments: Vec<ReviewComment>,
+    pub(super) next_comment_id: u64,
+    pub(super) active_comment_id: Option<u64>,
+    pub(super) comment_composer: Option<CommentComposer>,
+    pub(super) hovered_content_line: Option<usize>,
     pub(super) path_copy_flash: Option<(PathKind, bool, Instant)>,
     pub(super) path_popup_hover: Option<PathKind>,
     pub(crate) path_popup_rel_area: Option<Rect>,
@@ -345,6 +356,11 @@ impl App {
             link_flash: None,
             path_flash: None,
             last_click: None,
+            comments: Vec::new(),
+            next_comment_id: 1,
+            active_comment_id: None,
+            comment_composer: None,
+            hovered_content_line: None,
             path_copy_flash: None,
             path_popup_hover: None,
             path_popup_rel_area: None,
@@ -441,6 +457,7 @@ impl App {
         if !self.mouse_capture {
             self.hovered_link = None;
             self.hovered_toc_idx = None;
+            self.hovered_content_line = None;
             self.scrollbar_dragging = false;
         }
         self.mouse_capture
@@ -733,6 +750,9 @@ impl App {
                 .as_ref()
                 .map(|(_, t)| t.elapsed() < Duration::from_millis(FLASH_DURATION_MS))
                 .unwrap_or(false),
+            comment_mode: self.is_comment_composer_open(),
+            comment_count: self.comment_count(),
+            active_comment_id: self.active_comment_id(),
             mouse_capture: self.mouse_capture,
             toc_scroll_hint_visible: self.is_toc_scroll_hint_visible(),
         };

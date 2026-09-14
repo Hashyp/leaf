@@ -77,7 +77,7 @@ pub(super) fn popup_footer_line(segments: &[&'static str], bg: Color) -> Line<'s
 
 pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
     let theme = app_theme();
-    let area = centered_rect(53, 26, f.area());
+    let area = centered_rect(55, 30, f.area());
 
     let select_hint =
         crate::editor::selection_modifier_label(&crate::editor::detect_terminal_emulator());
@@ -160,6 +160,25 @@ pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
             Span::raw("        "),
             Span::styled("ctrl+r, r   ", key_style),
             Span::styled("reload", text_style),
+        ]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Comments (local-only prototype)",
+            section_style,
+        )]),
+        Line::from(vec![
+            Span::styled("a          ", key_style),
+            Span::styled("add at hover/top", text_style),
+            Span::raw("   "),
+            Span::styled("[/]         ", key_style),
+            Span::styled("prev/next", text_style),
+        ]),
+        Line::from(vec![
+            Span::styled("e          ", key_style),
+            Span::styled("edit active", text_style),
+            Span::raw("       "),
+            Span::styled("x           ", key_style),
+            Span::styled("remove", text_style),
         ]),
         Line::from(""),
         Line::from(vec![Span::styled("Actions", section_style)]),

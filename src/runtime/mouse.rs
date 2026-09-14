@@ -3,7 +3,7 @@ use crate::{
     clipboard::{copy_to_clipboard, open_url},
     editor::{self, classify, open_in_editor, split_editor_cmd, EditorResult},
     markdown::display_width,
-    render::{CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
+    render::{COMMENT_GUTTER_WIDTH, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
 };
 use anyhow::Result;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -114,7 +114,12 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     }
                 }
 
-                let gutter = app.line_number_gutter_width() as u16;
+                if let Some(line_idx) = comment_gutter_line_at(app, mouse.column, mouse.row) {
+                    app.last_click = None;
+                    return app.begin_comment_at_rendered_line(line_idx);
+                }
+
+                let gutter = app.line_number_gutter_width() as u16 + COMMENT_GUTTER_WIDTH;
                 let link_hit = app.link_at_position(
                     mouse.column,
                     mouse.row,
@@ -212,7 +217,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 let scrollbar_changed = is_on_scrollbar(area, prev_col, prev_row)
                     || is_on_scrollbar(area, mouse.column, mouse.row);
 
-                let gutter = app.line_number_gutter_width() as u16;
+                let gutter = app.line_number_gutter_width() as u16 + COMMENT_GUTTER_WIDTH;
                 let new_hover = app.find_hovered_link(
                     mouse.column,
                     mouse.row,
@@ -240,7 +245,10 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                     app.hovered_toc_idx = new_toc_hover;
                 }
 
-                scrollbar_changed || hover_changed || toc_hover_changed
+                let new_content_hover = content_hover_line_at(app, mouse.column, mouse.row);
+                let content_hover_changed = app.set_hovered_content_line(new_content_hover);
+
+                scrollbar_changed || hover_changed || toc_hover_changed || content_hover_changed
             }
             _ => false,
         }
@@ -387,20 +395,45 @@ fn content_inner_x(area: Rect, gutter: u16) -> u16 {
     area.x + CONTENT_HORIZONTAL_PADDING + gutter
 }
 
+fn comment_gutter_line_at(app: &App, col: u16, row: u16) -> Option<usize> {
+    let gutter_x = app.content_area.x + CONTENT_HORIZONTAL_PADDING;
+    if col < gutter_x || col >= gutter_x + COMMENT_GUTTER_WIDTH {
+        return None;
+    }
+    line_idx_at_row(app, row)
+}
+
+fn content_hover_line_at(app: &App, col: u16, row: u16) -> Option<usize> {
+    let area = app.content_area;
+    let left = area.x + CONTENT_HORIZONTAL_PADDING;
+    let right = area
+        .right()
+        .saturating_sub(CONTENT_HORIZONTAL_PADDING)
+        .saturating_sub(SCROLLBAR_WIDTH);
+    if col < left || col >= right {
+        return None;
+    }
+    line_idx_at_row(app, row)
+}
+
 fn line_idx_at(app: &App, col: u16, row: u16) -> Option<usize> {
     let area = app.content_area;
-    let gutter = app.line_number_gutter_width() as u16;
+    let gutter = app.line_number_gutter_width() as u16 + COMMENT_GUTTER_WIDTH;
     let inner_x = content_inner_x(area, gutter);
-    let inner_w = area
-        .width
-        .saturating_sub(CONTENT_HORIZONTAL_PADDING * 2)
-        .saturating_sub(SCROLLBAR_WIDTH)
-        .saturating_sub(gutter);
-    if col < inner_x || col >= inner_x + inner_w || row < area.y || row >= area.y + area.height {
+    let inner_w = content_text_width(app);
+    if col < inner_x || col >= inner_x + inner_w {
+        return None;
+    }
+    line_idx_at_row(app, row)
+}
+
+fn line_idx_at_row(app: &App, row: u16) -> Option<usize> {
+    let area = app.content_area;
+    if row < area.y || row >= area.y + area.height {
         return None;
     }
     let rel_row = (row - area.y) as usize;
-    let content_width = inner_w.max(1) as usize;
+    let content_width = content_text_width(app).max(1) as usize;
     let mut visual_row = 0usize;
     let total = app.lines.len();
     for line_idx in app.scroll..total {
@@ -424,6 +457,15 @@ fn line_idx_at(app: &App, col: u16, row: u16) -> Option<usize> {
         }
     }
     None
+}
+
+fn content_text_width(app: &App) -> u16 {
+    app.content_area
+        .width
+        .saturating_sub(CONTENT_HORIZONTAL_PADDING * 2)
+        .saturating_sub(SCROLLBAR_WIDTH)
+        .saturating_sub(COMMENT_GUTTER_WIDTH)
+        .saturating_sub(app.line_number_gutter_width() as u16)
 }
 
 fn strip_unc_prefix(path: std::path::PathBuf) -> std::path::PathBuf {
