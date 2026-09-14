@@ -154,6 +154,19 @@ pub(crate) fn status_comment_section(app: &App) -> Option<Vec<Span<'static>>> {
                 .bg(theme.ui.status_search_bg),
         )]);
     }
+    if let Some(cursor) = app.comment_cursor() {
+        let source_line = app.source_line_at(cursor.rendered_line);
+        let target = app
+            .comment_cursor_word_focus()
+            .map(|word| format!(" · {}", word.text))
+            .unwrap_or_default();
+        return Some(vec![Span::styled(
+            format!(" ⌖ line {source_line}{target} "),
+            Style::default()
+                .fg(theme.ui.status_search_fg)
+                .bg(theme.ui.status_search_bg),
+        )]);
+    }
     if app.comment_count() == 0 {
         return None;
     }
@@ -203,6 +216,8 @@ pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> 
 pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
     if app.is_comment_composer_open() {
         &["enter save", "alt+enter newline", "esc cancel"]
+    } else if app.is_comment_cursor_active() {
+        &["j/k line", "h/l word", "a comment", "esc cancel"]
     } else if app.is_goto_line_mode() || app.is_search_mode() {
         &["enter confirm", "esc cancel"]
     } else if app.has_active_goto_line() {
@@ -211,7 +226,7 @@ pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
         &["n/N next/prev", "esc cancel"]
     } else {
         &[
-            "a comment",
+            "v focus",
             "ctrl+e edit",
             "ctrl+f find",
             "t toc",

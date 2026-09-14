@@ -15,7 +15,7 @@
   - `goto_line.rs`  :  go-to-line mode (`Ctrl+L`): draft input, target validation, error state, contextual scroll offset
   - `flash.rs`  :  flash notification state (editor, watch, config, link, reload)
   - `code_blocks.rs`  :  code block selection, focus cycling, and clipboard copy
-  - `comments.rs`  :  in-memory line comments, composer lifecycle, active-comment navigation, and gutter state
+  - `comments.rs`  :  in-memory line/word comments, keyboard focus cursor, composer lifecycle, navigation, and gutter state
   - `popups.rs`  :  help, path popup, editor picker state and methods
   - `links.rs`  :  link detection, hover tracking, link span mapping
   - `file_picker.rs`  :  fuzzy and browser picker state, queue/pending lifecycle
@@ -136,7 +136,7 @@
 
 - **Initial mode** (`!app.has_content()`): no file loaded, picker is the main view. Quit shortcuts exit the app.
 - **Preview mode** (`app.has_content()`): file loaded via argument, stdin, or picker selection. Quit shortcuts in pickers close the popup and return to the preview.
-- **Comment composer**: a modal, UI-only draft attached to a source line. Saving adds it to the current document's in-memory review panel; opening another document clears all comments.
+- **Comment cursor/composer**: `v` or `Tab` starts a keyboard focus cursor; `j/k` selects lines and `h/l` selects words before `a` opens a modal draft. Saving adds it to the current document's in-memory review panel; opening another document clears all comments.
 
 ## Picker lifecycle
 

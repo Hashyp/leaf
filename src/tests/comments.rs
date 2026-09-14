@@ -64,6 +64,52 @@ fn comment_can_be_added_to_a_source_line() {
 }
 
 #[test]
+fn keyboard_cursor_focuses_a_line_then_words_before_commenting() {
+    let mut app = comment_app();
+
+    assert!(app.start_comment_cursor());
+    assert_eq!(app.comment_cursor().unwrap().rendered_line, 0);
+    assert_eq!(app.comment_cursor_word_focus(), None);
+
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_word_next());
+    assert_eq!(
+        app.comment_cursor_word_focus().unwrap().text,
+        "two".to_string()
+    );
+    assert!(app.move_comment_cursor_word_next());
+    assert_eq!(
+        app.comment_cursor_word_focus().unwrap().text,
+        "wrapped".to_string()
+    );
+
+    assert!(app.begin_comment_at_focus());
+    let composer = app.comment_composer().unwrap();
+    assert_eq!(composer.source_line, 2);
+    assert_eq!(composer.selected_text.as_deref(), Some("wrapped"));
+    assert!(!app.is_comment_cursor_active());
+
+    for ch in "Use a more specific term".chars() {
+        app.push_comment_char(ch);
+    }
+    assert!(app.save_comment());
+    assert_eq!(app.comments()[0].selected_text.as_deref(), Some("wrapped"));
+}
+
+#[test]
+fn keyboard_word_navigation_can_return_to_whole_line_focus() {
+    let mut app = comment_app();
+    assert!(app.start_comment_cursor());
+    assert!(app.move_comment_cursor_word_next());
+    assert!(app.comment_cursor_word_focus().is_some());
+
+    assert!(app.move_comment_cursor_word_previous());
+
+    assert!(app.comment_cursor_word_focus().is_none());
+}
+
+#[test]
 fn empty_comment_keeps_composer_open() {
     let mut app = comment_app();
     assert!(app.begin_comment_at_rendered_line(0));
@@ -122,14 +168,40 @@ fn gutter_shows_one_anchor_marker_and_hover_add_affordance() {
 }
 
 #[test]
+fn keyboard_cursor_renders_focused_word_and_mode_hints() {
+    let _guard = super::lock_theme_test_state();
+    let mut app = comment_app();
+    assert!(app.start_comment_cursor());
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_word_next());
+    assert!(app.move_comment_cursor_word_next());
+
+    let output = buffer_text(&draw(&mut app, 100, 24));
+
+    assert!(output.contains("⌖ line 2 · wrapped"));
+    assert!(output.contains("j/k line"));
+    assert!(output.contains("h/l word"));
+    assert!(output.contains("a comment"));
+}
+
+#[test]
 fn comments_render_in_a_local_only_review_panel() {
     let _guard = super::lock_theme_test_state();
     let mut app = comment_app();
-    add_comment(&mut app, 1, "Clarify the expected behavior");
+    assert!(app.start_comment_cursor());
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_word_next());
+    assert!(app.begin_comment_at_focus());
+    for ch in "Clarify the expected behavior".chars() {
+        app.push_comment_char(ch);
+    }
+    assert!(app.save_comment());
 
     let output = buffer_text(&draw(&mut app, 100, 24));
 
     assert!(output.contains("Comments 1 · local only"));
+    assert!(output.contains("› two"));
     assert!(output.contains("Clarify the expected"));
     assert!(output.contains("◆"));
 }
@@ -138,14 +210,17 @@ fn comments_render_in_a_local_only_review_panel() {
 fn composer_renders_target_and_ephemeral_scope() {
     let _guard = super::lock_theme_test_state();
     let mut app = comment_app();
-    assert!(app.begin_comment_at_rendered_line(3));
+    assert!(app.start_comment_cursor());
+    assert!(app.move_comment_cursor_word_next());
+    assert!(app.begin_comment_at_focus());
     for ch in "Looks good".chars() {
         app.push_comment_char(ch);
     }
 
     let output = buffer_text(&draw(&mut app, 100, 24));
 
-    assert!(output.contains("Add comment · line 3"));
+    assert!(output.contains("Add comment · line 1"));
     assert!(output.contains("Comments live only for this open document"));
+    assert!(output.contains("Target: “one”"));
     assert!(output.contains("Looks good"));
 }

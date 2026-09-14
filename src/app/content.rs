@@ -47,6 +47,7 @@ impl App {
         self.link_spans_by_line = super::links::link_spans_to_map(link_spans);
         self.hovered_link = None;
         self.hovered_content_line = None;
+        self.comment_cursor = None;
         self.set_code_blocks(code_blocks);
         self.code_select = None;
         self.set_line_maps(line_number_map, source_line_map);

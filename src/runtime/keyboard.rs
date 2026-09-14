@@ -339,6 +339,31 @@ pub(super) fn handle_key_event(
             KeyCode::Char(c) => app.push_search_draft(c),
             _ => state_changed = false,
         }
+    } else if app.is_comment_cursor_active() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('v') => {
+                app.clear_comment_cursor();
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.clear_comment_cursor();
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                state_changed = app.move_comment_cursor_down();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                state_changed = app.move_comment_cursor_up();
+            }
+            KeyCode::Char('h') | KeyCode::Left | KeyCode::BackTab => {
+                state_changed = app.move_comment_cursor_word_previous();
+            }
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Tab => {
+                state_changed = app.move_comment_cursor_word_next();
+            }
+            KeyCode::Char('a') => {
+                state_changed = app.begin_comment_at_focus();
+            }
+            _ => state_changed = false,
+        }
     } else {
         let mut mode_exited = false;
         if app.is_code_select_mode() {
@@ -457,6 +482,9 @@ pub(super) fn handle_key_event(
             }
             KeyCode::Char('p') => {
                 app.open_path_popup();
+            }
+            KeyCode::Char('v') | KeyCode::Tab => {
+                state_changed = app.start_comment_cursor();
             }
             KeyCode::Char('a') => {
                 state_changed = app.begin_comment_at_focus();

@@ -68,6 +68,26 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    if let Some(cursor) = app.comment_cursor() {
+        if (scroll..visible_end).contains(&cursor.rendered_line) {
+            let line = &mut visible_lines[cursor.rendered_line - scroll];
+            if let Some(word) = app.comment_cursor_word_focus() {
+                apply_keyboard_word_focus(
+                    line,
+                    word.start_col,
+                    word.end_col,
+                    Style::default()
+                        .bg(theme.markdown.search_match_bg)
+                        .add_modifier(Modifier::BOLD),
+                );
+            } else {
+                for span in &mut line.spans {
+                    span.style = span.style.bg(theme.ui.toc_active_bg);
+                }
+            }
+        }
+    }
+
     if app.is_line_number_visible() {
         let digit_width = app.line_number_total().max(1).to_string().len();
         let gutter_style = Style::default().fg(theme.markdown.code_gutter);
@@ -205,6 +225,44 @@ fn apply_code_block_highlight(
             }
         }
     }
+}
+
+fn apply_keyboard_word_focus(
+    line: &mut ratatui::text::Line<'static>,
+    start_col: usize,
+    end_col: usize,
+    focus_style: Style,
+) {
+    let mut result = Vec::new();
+    let mut col = 0usize;
+    for span in &line.spans {
+        let mut chunk = String::new();
+        let mut chunk_focused = None;
+        for ch in span.content.chars() {
+            let width = display_width(&ch.to_string());
+            let focused = col + width > start_col && col < end_col;
+            if chunk_focused.is_some_and(|state| state != focused) {
+                let style = if chunk_focused == Some(true) {
+                    span.style.patch(focus_style)
+                } else {
+                    span.style
+                };
+                result.push(Span::styled(std::mem::take(&mut chunk), style));
+            }
+            chunk.push(ch);
+            chunk_focused = Some(focused);
+            col += width;
+        }
+        if !chunk.is_empty() {
+            let style = if chunk_focused == Some(true) {
+                span.style.patch(focus_style)
+            } else {
+                span.style
+            };
+            result.push(Span::styled(chunk, style));
+        }
+    }
+    line.spans = result;
 }
 
 fn apply_hover_style(

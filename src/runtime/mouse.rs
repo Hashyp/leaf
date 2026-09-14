@@ -69,6 +69,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
     } else {
         match mouse.kind {
             MouseEventKind::ScrollUp => {
+                app.clear_comment_cursor();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_up(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -80,6 +81,7 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 true
             }
             MouseEventKind::ScrollDown => {
+                app.clear_comment_cursor();
                 if mouse_in_toc_area(app, mouse.column, mouse.row) {
                     app.scroll_toc_down(super::MOUSE_SCROLL_STEP);
                     return true;
@@ -246,9 +248,18 @@ pub(super) fn handle_mouse_event(app: &mut App, mouse: MouseEvent) -> bool {
                 }
 
                 let new_content_hover = content_hover_line_at(app, mouse.column, mouse.row);
+                let cursor_changed = if new_content_hover.is_some() {
+                    app.clear_comment_cursor()
+                } else {
+                    false
+                };
                 let content_hover_changed = app.set_hovered_content_line(new_content_hover);
 
-                scrollbar_changed || hover_changed || toc_hover_changed || content_hover_changed
+                scrollbar_changed
+                    || hover_changed
+                    || toc_hover_changed
+                    || cursor_changed
+                    || content_hover_changed
             }
             _ => false,
         }

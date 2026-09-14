@@ -63,19 +63,30 @@ pub(super) fn render_comment_composer(f: &mut Frame, app: &App) {
         ])
         .split(inner);
 
+    let target = composer
+        .selected_text
+        .as_deref()
+        .map(|text| format!("Target: “{text}”"))
+        .unwrap_or_else(|| "Target: entire line".to_string());
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                "UI prototype",
-                Style::default()
-                    .fg(theme.ui.toc_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "  Comments live only for this open document.",
-                Style::default().fg(theme.ui.toc_secondary_text_inactive),
-            ),
-        ])),
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    "UI prototype",
+                    Style::default()
+                        .fg(theme.ui.toc_accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "  Comments live only for this open document.",
+                    Style::default().fg(theme.ui.toc_secondary_text_inactive),
+                ),
+            ]),
+            Line::from(Span::styled(
+                target,
+                Style::default().fg(theme.markdown.link_hover),
+            )),
+        ]),
         rows[0],
     );
 
@@ -182,6 +193,25 @@ pub(super) fn comment_panel_lines(app: &App, width: usize) -> (Vec<Line<'static>
             width,
             bg,
         ));
+
+        if let Some(selected_text) = &comment.selected_text {
+            for selected_line in wrap_comment_text(selected_text, width.saturating_sub(4).max(1)) {
+                lines.push(padded_line(
+                    vec![
+                        Span::styled("  › ", Style::default().fg(theme.ui.toc_accent).bg(bg)),
+                        Span::styled(
+                            selected_line,
+                            Style::default()
+                                .fg(theme.markdown.link_hover)
+                                .bg(bg)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
+                    ],
+                    width,
+                    bg,
+                ));
+            }
+        }
 
         for body_line in wrap_comment_text(&comment.body, width.saturating_sub(2).max(1)) {
             lines.push(padded_line(
