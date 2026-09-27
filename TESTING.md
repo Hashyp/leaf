@@ -83,6 +83,28 @@ While running `leaf --watch TESTING.md`:
 - confirm the `⟳ reloaded` indicator appears
 - press `r` to force a reload manually
 
+### Connected Pi Review
+
+Build Leaf, then start Pi from this trusted checkout so `.pi/extensions/leaf-review.ts` is loaded:
+
+```bash
+cargo build
+pi
+```
+
+Ask Pi to create or edit a temporary Markdown file and confirm:
+
+- Leaf opens the resulting file in a separate terminal and stays open
+- `v` or `Tab`, `j`/`k`, `h`/`l`, and `a` can target a line or word and open the comment composer
+- `Enter` saves a comment and `s` submits all draft comments
+- Leaf shows `Pi addressing …` while the review is in flight
+- the injected Pi message contains each comment's body, source location, selected text/columns, nearby context, document path, and revision
+- after Pi edits the file and calls `leaf_review_complete`, Leaf reloads the changed Markdown automatically
+- confirmed comments show a green `✓ addressed`; omitted or failed comments return to draft
+- ending the Pi session leaves Leaf open and changes its status to disconnected
+
+Replies and comment threads are not part of this smoke test.
+
 ### Stdin Mode
 
 While running `cat TESTING.md | leaf`:

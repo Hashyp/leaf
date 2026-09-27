@@ -21,6 +21,7 @@ export extern "leaf" [
   --editor(-e): string@"nu-complete leaf editors"
   --inline: string@"nu-complete leaf inline"
   --width: int
+  --review-channel: path
   --picker
   --fuzzy: string
   --history(-H): string@"nu-complete leaf history"

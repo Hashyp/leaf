@@ -5,6 +5,7 @@ complete -c leaf -l theme -x -a "arctic forest ocean-dark solarized-dark" -d "Se
 complete -c leaf -s e -l editor -x -a "nano vim vi nvim micro hx emacs jed code codium subl gedit kate mousepad zed xjed notepad notepad++" -d "Set external editor"
 complete -c leaf -l inline -x -a "ansi plain" -d "Render to stdout (no TUI)"
 complete -c leaf -l width -x -d "Set maximum content width (min: 20)"
+complete -c leaf -l review-channel -r -a "(__fish_complete_directories)" -d "Connect a file to a Pi review session"
 complete -c leaf -l picker -d "Open the file browser picker"
 complete -c leaf -l fuzzy -d "Open the fuzzy file picker (KEYWORD pre-fills the filter)"
 complete -c leaf -s H -l history -x -a "edit remove list" -d "Open picker, or edit/remove/list file history"

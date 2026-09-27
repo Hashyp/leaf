@@ -75,7 +75,7 @@ pub(super) fn popup_footer_line(segments: &[&'static str], bg: Color) -> Line<'s
     Line::from(spans)
 }
 
-pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
+pub(super) fn render_help_popup(f: &mut Frame, app: &App) {
     let theme = app_theme();
     let area = centered_rect(55, 31, f.area());
 
@@ -163,7 +163,11 @@ pub(super) fn render_help_popup(f: &mut Frame, _app: &App) {
         ]),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "Comments (local-only prototype)",
+            if app.is_review_bridge_connected() {
+                "Comments (s sends review to Pi)"
+            } else {
+                "Comments (local-only prototype)"
+            },
             section_style,
         )]),
         Line::from(vec![

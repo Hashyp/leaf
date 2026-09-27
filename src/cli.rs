@@ -49,6 +49,7 @@ pub(crate) struct CliOptions {
     pub(crate) history: Option<HistoryAction>,
     pub(crate) fuzzy: bool,
     pub(crate) fuzzy_query: Option<String>,
+    pub(crate) review_channel: Option<String>,
 }
 
 pub(crate) const FUZZY_QUERY_MAX_LEN: usize = 15;
@@ -85,6 +86,7 @@ pub(crate) fn usage_text() -> &'static str {
      \x20 -e, --editor <NAME>          Set external editor (nano|vim|code|subl|emacs)\n\
      \x20     --inline [SPEC]          Render to stdout (no TUI) [ansi|plain][:<width>]\n\
      \x20     --width <N>              Set maximum content width (min: 20)\n\
+     \x20     --review-channel <DIR>   Connect this file to a Pi review session (implies watch)\n\
      \x20     --fuzzy [KEYWORD]        Open the fuzzy file picker (KEYWORD pre-fills the filter)\n\
      \x20     --picker                 Open the file browser picker\n\
      \x20 -H, --history [SPEC]         Open picker, or [edit|remove|list:<n>] file history\n\
@@ -167,6 +169,19 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<CliOptions> {
                 options.auto_complete = Some(ac_arg);
             }
             "--debug-input" => options.debug_input = true,
+            "--review-channel" => {
+                let Some(path) = iter.next() else {
+                    anyhow::bail!("Missing value for --review-channel");
+                };
+                options.review_channel = Some(path.clone());
+            }
+            _ if arg.starts_with("--review-channel=") => {
+                let path = arg["--review-channel=".len()..].trim();
+                if path.is_empty() {
+                    anyhow::bail!("Missing value for --review-channel");
+                }
+                options.review_channel = Some(path.to_string());
+            }
             "--help" | "-h" => options.print_help = true,
             "--version" | "-V" => options.print_version = true,
             "--history" | "-H" => {
@@ -260,7 +275,8 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<CliOptions> {
             || options.debug_input
             || options.file_arg.is_some()
             || options.theme.is_some()
-            || options.editor.is_some();
+            || options.editor.is_some()
+            || options.review_channel.is_some();
         if has_other {
             anyhow::bail!("{name} must be used on its own");
         }
@@ -275,6 +291,18 @@ pub(crate) fn parse_cli(args: &[String]) -> Result<CliOptions> {
         }
         if options.fuzzy {
             anyhow::bail!("--inline cannot be combined with --fuzzy");
+        }
+        if options.review_channel.is_some() {
+            anyhow::bail!("--inline cannot be combined with --review-channel");
+        }
+    }
+
+    if options.review_channel.is_some() {
+        if options.file_arg.is_none() {
+            anyhow::bail!("--review-channel requires a file path");
+        }
+        if options.picker || options.fuzzy || options.last {
+            anyhow::bail!("--review-channel cannot be combined with --picker, --fuzzy, or --last");
         }
     }
 

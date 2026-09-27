@@ -873,3 +873,49 @@ fn load_path_activates_watch_from_config() {
     let _ = fs::remove_file(path);
     let _ = fs::remove_file(path2);
 }
+
+#[test]
+fn parse_cli_accepts_pi_review_channel_with_file() {
+    let args = vec![
+        "leaf".to_string(),
+        "--review-channel".to_string(),
+        "/tmp/leaf-review".to_string(),
+        "plan.md".to_string(),
+    ];
+
+    let options = parse_cli(&args).unwrap();
+
+    assert_eq!(options.review_channel.as_deref(), Some("/tmp/leaf-review"));
+    assert_eq!(options.file_arg.as_deref(), Some("plan.md"));
+}
+
+#[test]
+fn parse_cli_rejects_pi_review_channel_without_file() {
+    let args = vec![
+        "leaf".to_string(),
+        "--review-channel=/tmp/leaf-review".to_string(),
+    ];
+
+    let error = parse_cli(&args).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("--review-channel requires a file path"));
+}
+
+#[test]
+fn parse_cli_rejects_pi_review_channel_in_inline_mode() {
+    let args = vec![
+        "leaf".to_string(),
+        "--inline".to_string(),
+        "--review-channel".to_string(),
+        "/tmp/leaf-review".to_string(),
+        "plan.md".to_string(),
+    ];
+
+    let error = parse_cli(&args).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("--inline cannot be combined with --review-channel"));
+}

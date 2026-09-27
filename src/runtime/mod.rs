@@ -88,6 +88,7 @@ pub(crate) fn run(
     const FLASH_DURATION: Duration = Duration::from_millis(FLASH_DURATION_MS);
     const RESIZE_DEBOUNCE: Duration = Duration::from_millis(120);
     const PICKER_LOAD_POLL_INTERVAL: Duration = Duration::from_millis(50);
+    const REVIEW_BRIDGE_POLL_INTERVAL: Duration = Duration::from_millis(100);
     let mut needs_redraw = !initial_draw_done;
     let mut pending_resize: Option<Instant> = None;
     let mut last_title_filename: Option<String> = app.title_filename().map(str::to_string);
@@ -102,6 +103,9 @@ pub(crate) fn run(
             needs_redraw = true;
         }
         if app.poll_history_errors() {
+            needs_redraw = true;
+        }
+        if app.poll_review_bridge() {
             needs_redraw = true;
         }
 
@@ -147,6 +151,11 @@ pub(crate) fn run(
             },
             if app.is_picker_loading() {
                 Some(PICKER_LOAD_POLL_INTERVAL)
+            } else {
+                None
+            },
+            if app.is_review_bridge_connected() {
+                Some(REVIEW_BRIDGE_POLL_INTERVAL)
             } else {
                 None
             },

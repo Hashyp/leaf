@@ -1,18 +1,32 @@
-use super::App;
-use crate::markdown::display_width;
+use super::{
+    review_bridge::{
+        now_ms, ReviewCommentMetadata, ReviewContextLine, ReviewDocumentMetadata, ReviewEvent,
+        ReviewRequest, ReviewSelectionMetadata, ReviewTargetMetadata, REVIEW_PROTOCOL_VERSION,
+    },
+    App, ReviewAgentState, ReviewBridge, ReviewCommentStatus,
+};
+use crate::markdown::{display_width, hash_str};
+use std::{collections::HashSet, path::PathBuf};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReviewComment {
     pub(crate) id: u64,
     pub(crate) source_line: usize,
+    pub(crate) rendered_line: usize,
     pub(crate) selected_text: Option<String>,
+    pub(crate) selected_start_col: Option<usize>,
+    pub(crate) selected_end_col: Option<usize>,
     pub(crate) body: String,
+    pub(crate) status: ReviewCommentStatus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CommentComposer {
     pub(crate) source_line: usize,
+    pub(crate) rendered_line: usize,
     pub(crate) selected_text: Option<String>,
+    pub(crate) selected_start_col: Option<usize>,
+    pub(crate) selected_end_col: Option<usize>,
     pub(crate) draft: String,
     pub(crate) editing_id: Option<u64>,
 }
@@ -36,6 +50,10 @@ pub(crate) enum CommentGutterState {
     Add,
     Comment,
     Active,
+    Submitted,
+    SubmittedActive,
+    Addressed,
+    AddressedActive,
 }
 
 impl App {
@@ -47,8 +65,45 @@ impl App {
         self.comments.len()
     }
 
+    pub(crate) fn addressed_comment_count(&self) -> usize {
+        self.comments
+            .iter()
+            .filter(|comment| comment.status.is_addressed())
+            .count()
+    }
+
+    pub(crate) fn draft_comment_count(&self) -> usize {
+        self.comments
+            .iter()
+            .filter(|comment| comment.status.is_draft())
+            .count()
+    }
+
     pub(crate) fn has_comments(&self) -> bool {
         !self.comments.is_empty()
+    }
+
+    pub(crate) fn is_review_bridge_connected(&self) -> bool {
+        self.review_bridge.is_some()
+    }
+
+    pub(crate) fn review_agent_state(&self) -> &ReviewAgentState {
+        &self.review_agent_state
+    }
+
+    pub(crate) fn connect_review_bridge(&mut self, root: PathBuf) -> std::io::Result<()> {
+        let document_path = self.filepath.as_deref().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Pi review mode requires a file path",
+            )
+        })?;
+        self.review_bridge = Some(ReviewBridge::connect(root, document_path)?);
+        self.review_agent_state = ReviewAgentState::Ready;
+        self.watch = true;
+        self.watch_error = false;
+        self.status_cache_key = None;
+        Ok(())
     }
 
     pub(crate) fn active_comment(&self) -> Option<&ReviewComment> {
@@ -69,20 +124,31 @@ impl App {
     }
 
     pub(crate) fn begin_comment_at_focus(&mut self) -> bool {
-        let (rendered_line, selected_text) = if let Some(cursor) = self.comment_cursor {
-            (
-                cursor.rendered_line,
-                self.comment_cursor_word_focus().map(|word| word.text),
-            )
-        } else {
-            (
-                self.hovered_content_line
-                    .filter(|line| (self.scroll..self.visible_end()).contains(line))
-                    .unwrap_or(self.scroll),
-                None,
-            )
-        };
-        let opened = self.begin_comment_with_selection(rendered_line, selected_text);
+        let (rendered_line, selected_text, selected_start_col, selected_end_col) =
+            if let Some(cursor) = self.comment_cursor {
+                let word = self.comment_cursor_word_focus();
+                (
+                    cursor.rendered_line,
+                    word.as_ref().map(|word| word.text.clone()),
+                    word.as_ref().map(|word| word.start_col),
+                    word.as_ref().map(|word| word.end_col),
+                )
+            } else {
+                (
+                    self.hovered_content_line
+                        .filter(|line| (self.scroll..self.visible_end()).contains(line))
+                        .unwrap_or(self.scroll),
+                    None,
+                    None,
+                    None,
+                )
+            };
+        let opened = self.begin_comment_with_selection(
+            rendered_line,
+            selected_text,
+            selected_start_col,
+            selected_end_col,
+        );
         if opened {
             self.comment_cursor = None;
         }
@@ -90,7 +156,7 @@ impl App {
     }
 
     pub(crate) fn begin_comment_at_rendered_line(&mut self, rendered_line: usize) -> bool {
-        let opened = self.begin_comment_with_selection(rendered_line, None);
+        let opened = self.begin_comment_with_selection(rendered_line, None, None, None);
         if opened {
             self.comment_cursor = None;
         }
@@ -101,6 +167,8 @@ impl App {
         &mut self,
         rendered_line: usize,
         selected_text: Option<String>,
+        selected_start_col: Option<usize>,
+        selected_end_col: Option<usize>,
     ) -> bool {
         if !self.has_content() || rendered_line >= self.total() {
             return false;
@@ -108,7 +176,10 @@ impl App {
         let source_line = self.source_line_at(rendered_line).max(1);
         self.comment_composer = Some(CommentComposer {
             source_line,
+            rendered_line,
             selected_text,
+            selected_start_col,
+            selected_end_col,
             draft: String::new(),
             editing_id: None,
         });
@@ -147,12 +218,18 @@ impl App {
         }
 
         let source_line = composer.source_line;
+        let rendered_line = composer.rendered_line;
         let selected_text = composer.selected_text.clone();
+        let selected_start_col = composer.selected_start_col;
+        let selected_end_col = composer.selected_end_col;
         let editing_id = composer.editing_id;
         let active_id = if let Some(id) = editing_id {
             let Some(comment) = self.comments.iter_mut().find(|comment| comment.id == id) else {
                 return false;
             };
+            if !comment.status.is_draft() {
+                return false;
+            }
             comment.body = body;
             id
         } else {
@@ -161,8 +238,12 @@ impl App {
             self.comments.push(ReviewComment {
                 id,
                 source_line,
+                rendered_line,
                 selected_text,
+                selected_start_col,
+                selected_end_col,
                 body,
+                status: ReviewCommentStatus::Draft,
             });
             id
         };
@@ -171,6 +252,10 @@ impl App {
             .sort_by_key(|comment| (comment.source_line, comment.id));
         self.active_comment_id = Some(active_id);
         self.comment_composer = None;
+        if matches!(self.review_agent_state, ReviewAgentState::Error(_)) {
+            self.review_agent_state = ReviewAgentState::Ready;
+        }
+        self.status_cache_key = None;
         true
     }
 
@@ -178,9 +263,15 @@ impl App {
         let Some(comment) = self.active_comment().cloned() else {
             return false;
         };
+        if !comment.status.is_draft() {
+            return false;
+        }
         self.comment_composer = Some(CommentComposer {
             source_line: comment.source_line,
+            rendered_line: comment.rendered_line,
             selected_text: comment.selected_text,
+            selected_start_col: comment.selected_start_col,
+            selected_end_col: comment.selected_end_col,
             draft: comment.body,
             editing_id: Some(comment.id),
         });
@@ -191,6 +282,12 @@ impl App {
         let Some(active_id) = self.active_comment_id else {
             return false;
         };
+        if self
+            .active_comment()
+            .is_some_and(|comment| !comment.status.is_draft())
+        {
+            return false;
+        }
         let Some(position) = self
             .comments
             .iter()
@@ -206,7 +303,247 @@ impl App {
         } else {
             Some(self.comments[position.min(self.comments.len() - 1)].id)
         };
+        self.status_cache_key = None;
         true
+    }
+
+    pub(crate) fn submit_review(&mut self) -> bool {
+        if self.review_bridge.is_none()
+            || self.review_agent_state.is_working()
+            || matches!(self.review_agent_state, ReviewAgentState::Disconnected(_))
+        {
+            return false;
+        }
+
+        let draft_comments = self
+            .comments
+            .iter()
+            .filter(|comment| comment.status.is_draft())
+            .cloned()
+            .collect::<Vec<_>>();
+        if draft_comments.is_empty() {
+            return false;
+        }
+
+        let request_id = self
+            .review_bridge
+            .as_mut()
+            .expect("bridge checked above")
+            .next_request_id();
+        let request = self.build_review_request(request_id.clone(), &draft_comments);
+        let publish_result = self
+            .review_bridge
+            .as_ref()
+            .expect("bridge checked above")
+            .publish_request(&request);
+        if let Err(error) = publish_result {
+            self.review_agent_state =
+                ReviewAgentState::Error(format!("Could not send review to Pi: {error}"));
+            self.status_cache_key = None;
+            return false;
+        }
+
+        let submitted_ids = draft_comments
+            .iter()
+            .map(|comment| comment.id)
+            .collect::<HashSet<_>>();
+        for comment in &mut self.comments {
+            if submitted_ids.contains(&comment.id) {
+                comment.status = ReviewCommentStatus::Submitted {
+                    request_id: request_id.clone(),
+                };
+            }
+        }
+        self.review_agent_state = ReviewAgentState::Working {
+            request_id,
+            comment_count: submitted_ids.len(),
+        };
+        self.status_cache_key = None;
+        true
+    }
+
+    fn build_review_request(
+        &self,
+        request_id: String,
+        comments: &[ReviewComment],
+    ) -> ReviewRequest {
+        let path = self
+            .filepath
+            .as_deref()
+            .and_then(|path| path.canonicalize().ok())
+            .or_else(|| self.filepath.clone())
+            .unwrap_or_default();
+        let source_lines = self.source.lines().collect::<Vec<_>>();
+        let metadata = comments
+            .iter()
+            .map(|comment| {
+                let source_index = comment.source_line.saturating_sub(1);
+                let source_line_text = source_lines.get(source_index).copied().unwrap_or_default();
+                let bounded_source_index = source_index.min(source_lines.len());
+                let context_start = bounded_source_index.saturating_sub(2);
+                let context_end = bounded_source_index
+                    .saturating_add(3)
+                    .min(source_lines.len());
+                let context = source_lines[context_start..context_end]
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, text)| {
+                        let source_line = context_start + offset + 1;
+                        ReviewContextLine {
+                            source_line,
+                            text: (*text).to_string(),
+                            is_target: source_line == comment.source_line,
+                        }
+                    })
+                    .collect();
+                let selection =
+                    comment
+                        .selected_text
+                        .as_ref()
+                        .map(|text| ReviewSelectionMetadata {
+                            text: text.clone(),
+                            rendered_start_column: comment
+                                .selected_start_col
+                                .map(|column| column + 1)
+                                .unwrap_or(1),
+                            rendered_end_column_exclusive: comment
+                                .selected_end_col
+                                .map(|column| column + 1)
+                                .unwrap_or_else(|| display_width(text) + 1),
+                        });
+
+                ReviewCommentMetadata {
+                    id: comment.id,
+                    body: comment.body.clone(),
+                    target: ReviewTargetMetadata {
+                        source_line: comment.source_line,
+                        source_line_text: source_line_text.to_string(),
+                        rendered_line: comment.rendered_line + 1,
+                        selection,
+                    },
+                    context,
+                }
+            })
+            .collect();
+
+        ReviewRequest {
+            protocol_version: REVIEW_PROTOCOL_VERSION,
+            kind: "review_request",
+            request_id,
+            submitted_at_ms: now_ms(),
+            document: ReviewDocumentMetadata {
+                path: path.display().to_string(),
+                filename: self.filename.clone(),
+                revision: format!("{:016x}", hash_str(&self.source)),
+            },
+            comments: metadata,
+        }
+    }
+
+    pub(crate) fn poll_review_bridge(&mut self) -> bool {
+        let events = match self.review_bridge.as_ref() {
+            Some(bridge) => bridge.poll_events(),
+            None => return false,
+        };
+        let mut changed = false;
+        for event in events {
+            match event {
+                Ok(event) => changed |= self.apply_review_event(event),
+                Err(message) => {
+                    self.review_agent_state = ReviewAgentState::Error(message);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.status_cache_key = None;
+        }
+        changed
+    }
+
+    fn apply_review_event(&mut self, event: ReviewEvent) -> bool {
+        match event {
+            ReviewEvent::ReviewStarted { request_id, .. } => {
+                let comment_count = self
+                    .comments
+                    .iter()
+                    .filter(|comment| comment.status.belongs_to_request(&request_id))
+                    .count();
+                if comment_count == 0 {
+                    return false;
+                }
+                self.review_agent_state = ReviewAgentState::Working {
+                    request_id,
+                    comment_count,
+                };
+                true
+            }
+            ReviewEvent::ReviewCompleted {
+                request_id,
+                addressed_comment_ids,
+                ..
+            } => {
+                let addressed = addressed_comment_ids.into_iter().collect::<HashSet<_>>();
+                let mut submitted = 0usize;
+                let mut resolved = 0usize;
+                for comment in &mut self.comments {
+                    if !comment.status.belongs_to_request(&request_id) {
+                        continue;
+                    }
+                    submitted += 1;
+                    if addressed.contains(&comment.id) {
+                        comment.status = ReviewCommentStatus::Addressed;
+                        resolved += 1;
+                    } else {
+                        comment.status = ReviewCommentStatus::Draft;
+                    }
+                }
+                if submitted == 0 {
+                    return false;
+                }
+                self.review_agent_state = if submitted == resolved {
+                    ReviewAgentState::Ready
+                } else {
+                    ReviewAgentState::Error(format!(
+                        "Pi addressed {resolved} of {submitted} submitted comments"
+                    ))
+                };
+                true
+            }
+            ReviewEvent::ReviewFailed {
+                request_id,
+                message,
+                ..
+            } => {
+                let changed = self.restore_request_to_draft(&request_id);
+                if changed {
+                    self.review_agent_state = ReviewAgentState::Error(message);
+                }
+                changed
+            }
+            ReviewEvent::BridgeClosed { message, .. } => {
+                for comment in &mut self.comments {
+                    if matches!(comment.status, ReviewCommentStatus::Submitted { .. }) {
+                        comment.status = ReviewCommentStatus::Draft;
+                    }
+                }
+                self.review_agent_state = ReviewAgentState::Disconnected(
+                    message.unwrap_or_else(|| "Pi review connection closed".to_string()),
+                );
+                true
+            }
+        }
+    }
+
+    fn restore_request_to_draft(&mut self, request_id: &str) -> bool {
+        let mut changed = false;
+        for comment in &mut self.comments {
+            if comment.status.belongs_to_request(request_id) {
+                comment.status = ReviewCommentStatus::Draft;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub(crate) fn activate_next_comment(&mut self) -> bool {
@@ -247,6 +584,8 @@ impl App {
         self.comment_composer = None;
         self.comment_cursor = None;
         self.hovered_content_line = None;
+        self.review_agent_state = ReviewAgentState::Ready;
+        self.status_cache_key = None;
     }
 
     pub(crate) fn start_comment_cursor(&mut self) -> bool {
@@ -406,20 +745,30 @@ impl App {
             return CommentGutterState::Empty;
         }
 
-        let has_comment = self
-            .comments
-            .iter()
-            .any(|comment| comment.source_line == source_line);
-        if !has_comment {
-            return CommentGutterState::Empty;
-        }
-        if self
+        let active = self
             .active_comment()
-            .is_some_and(|comment| comment.source_line == source_line)
-        {
-            CommentGutterState::Active
-        } else {
-            CommentGutterState::Comment
+            .filter(|comment| comment.source_line == source_line);
+        let is_active = active.is_some();
+        let comment = active.or_else(|| {
+            self.comments
+                .iter()
+                .filter(|comment| comment.source_line == source_line)
+                .min_by_key(|comment| match comment.status {
+                    ReviewCommentStatus::Draft => 0,
+                    ReviewCommentStatus::Submitted { .. } => 1,
+                    ReviewCommentStatus::Addressed => 2,
+                })
+        });
+        let Some(comment) = comment else {
+            return CommentGutterState::Empty;
+        };
+        match (&comment.status, is_active) {
+            (ReviewCommentStatus::Draft, false) => CommentGutterState::Comment,
+            (ReviewCommentStatus::Draft, true) => CommentGutterState::Active,
+            (ReviewCommentStatus::Submitted { .. }, false) => CommentGutterState::Submitted,
+            (ReviewCommentStatus::Submitted { .. }, true) => CommentGutterState::SubmittedActive,
+            (ReviewCommentStatus::Addressed, false) => CommentGutterState::Addressed,
+            (ReviewCommentStatus::Addressed, true) => CommentGutterState::AddressedActive,
         }
     }
 

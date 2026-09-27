@@ -108,6 +108,13 @@ impl App {
         );
 
         let first_load = self.filepath.is_none();
+        let changed_review_document = self
+            .filepath
+            .as_ref()
+            .is_some_and(|current| current != &path);
+        if changed_review_document {
+            self.review_bridge = None;
+        }
         self.clear_comments_for_document();
         self.filename = filename;
         self.source = src;

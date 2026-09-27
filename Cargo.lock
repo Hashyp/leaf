@@ -1058,6 +1058,7 @@ dependencies = [
  "reqwest",
  "semver",
  "serde",
+ "serde_json",
  "sha2",
  "syntect",
  "toml",

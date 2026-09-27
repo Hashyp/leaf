@@ -15,7 +15,8 @@
   - `goto_line.rs`  :  go-to-line mode (`Ctrl+L`): draft input, target validation, error state, contextual scroll offset
   - `flash.rs`  :  flash notification state (editor, watch, config, link, reload)
   - `code_blocks.rs`  :  code block selection, focus cycling, and clipboard copy
-  - `comments.rs`  :  in-memory line/word comments, keyboard focus cursor, composer lifecycle, navigation, and gutter state
+  - `comments.rs`  :  line/word comments, keyboard focus cursor, composer lifecycle, navigation, per-comment review status, and review request construction
+  - `review_bridge.rs`  :  versioned filesystem JSON channel used to publish review requests and consume Pi status/completion events
   - `popups.rs`  :  help, path popup, editor picker state and methods
   - `links.rs`  :  link detection, hover tracking, link span mapping
   - `file_picker.rs`  :  fuzzy and browser picker state, queue/pending lifecycle
@@ -48,14 +49,14 @@
 - `src/render/`
   - `mod.rs`  :  TUI layout orchestration with `ratatui`
   - `content.rs`  :  main content panel rendering and comment gutter affordances
-  - `comments.rs`  :  local-only comments panel and add/edit composer rendering
+  - `comments.rs`  :  comments panel and composer rendering, including draft, submitted, and addressed states
   - `popup.rs`  :  popup rendering for help, theme picker, path display
   - `popup_picker.rs`  :  popup rendering for file picker, editor picker, loading/failed states
   - `status.rs`  :  status bar construction (brand, filename, search, watch, shortcuts, percentage)
   - `toc.rs`  :  TOC sidebar rendering
 
 - `src/runtime/`
-  - `mod.rs`  :  event loop, polling, timers, resize synchronization
+  - `mod.rs`  :  event loop, file/review-channel polling, timers, resize synchronization
   - `keyboard.rs`  :  keyboard handling with mode-aware branching (popups, pickers, goto-line, search, normal)
   - `mouse.rs`  :  mouse handling (scroll, click, double-click, scrollbar drag, link hover)
 
@@ -96,9 +97,13 @@
 - `src/update.rs`
   - self-update: asset download, SHA256 verification, and binary replacement
 
+- `.pi/extensions/leaf-review.ts`
+  - Pi extension that detects Markdown output, launches a persistent connected Leaf process, forwards review requests into the Pi session, and publishes completion/failure events
+
 - `src/tests/`
   - `app.rs`  :  app state, search, and mode detection tests
   - `app_code_blocks.rs`  :  code block selection, focus cycling, and copy tests
+  - `comments.rs`  :  local comment interactions plus connected request metadata, reload preservation, and completion/failure state tests
   - `file_picker.rs`  :  picker opening, browser mode, queued transitions
   - `file_fuzzy.rs`  :  fuzzy matching, scoring, filtering, truncation
   - `markdown_lists.rs`  :  list rendering regression tests
@@ -129,6 +134,8 @@
 6. `runtime.rs` runs the event loop:
    - processes the pending picker queue and spawns the loading thread
    - polls picker loading, installing results when ready
+   - polls a connected Pi review channel and applies one-shot status/completion events
+   - checks watched files and reparses changed content without closing the TUI
    - handles input events through mode-aware branching
 7. `render/` draws each frame from `App`.
 
@@ -136,7 +143,8 @@
 
 - **Initial mode** (`!app.has_content()`): no file loaded, picker is the main view. Quit shortcuts exit the app.
 - **Preview mode** (`app.has_content()`): file loaded via argument, stdin, or picker selection. Quit shortcuts in pickers close the popup and return to the preview.
-- **Comment cursor/composer**: `v` or `Tab` starts a keyboard focus cursor; `j/k` selects lines and `h/l` selects words before `a` opens a modal draft. Saving adds it to the current document's in-memory review panel; opening another document clears all comments.
+- **Comment cursor/composer**: `v` or `Tab` starts a keyboard focus cursor; `j/k` selects lines and `h/l` selects words before `a` opens a modal draft. Saving adds it to the current document's review panel; opening another document clears all comments.
+- **Connected Pi review** (`--review-channel <DIR> <file>`): forces watch mode, sends all draft comments with source/render metadata when `s` is pressed, shows agent progress, preserves comments across same-file reloads, and marks only IDs confirmed by Pi as addressed. The channel is detached if the user opens a different document.
 
 ## Picker lifecycle
 

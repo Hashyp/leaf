@@ -169,6 +169,33 @@ claude "explain Rust lifetimes" | leaf
 cat TESTING.md | leaf
 ```
 
+## Pi Review Integration
+
+Leaf can stay connected to a [Pi coding agent](https://github.com/earendil-works/pi) while you review an agent-produced Markdown file. Build the current Leaf binary, then start Pi from this trusted checkout so it loads the project extension:
+
+```bash
+cargo build
+pi
+```
+
+If Pi was already running when the extension was added, run `/reload` once. To make the integration available in every Pi project, install the extension globally:
+
+```bash
+mkdir -p ~/.pi/agent/extensions
+cp .pi/extensions/leaf-review.ts ~/.pi/agent/extensions/leaf-review.ts
+```
+
+The review flow is:
+
+1. After a successful Pi `write` or `edit` of a Markdown file, the extension opens that file in a connected Leaf process. Shell-written Markdown files are detected when their path appears in the command; `/leaf-review <file.md>` is the explicit fallback.
+2. In Leaf, add one or more comments, save each composer with `Enter`, then press `s`. Leaf sends Pi the comment text together with the document revision, source line and text, rendered line/columns, selected word, and nearby source context.
+3. Leaf remains open and shows **Pi addressing …** while the agent edits the document.
+4. Watch mode reloads the newer file automatically. Comments confirmed by Pi are retained and shown with a green `✓ addressed`; unconfirmed comments return to draft so they can be resent.
+
+This first protocol handles root-level comments only. Comment replies and discussion threads are intentionally out of scope.
+
+By default the extension uses `target/debug/leaf` from Pi's working directory or a `leaf` executable on `PATH`. Override that lookup with `LEAF_REVIEW_BIN=/path/to/leaf`. On Linux it opens a supported terminal automatically; set `LEAF_REVIEW_TERMINAL` to a known terminal executable or `LEAF_REVIEW_LAUNCHER` to a custom launcher that accepts the Leaf executable and its arguments.
+
 ## Inline Mode
 
 Render Markdown directly to **stdout** without the interactive TUI:
@@ -335,7 +362,8 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 | `Ctrl+F` / `/` | Find | `Ctrl+Click` | Open link |
 | `v` / `Tab` | Start keyboard comment cursor | `j` / `k` (cursor) | Focus line |
 | `h` / `l` (cursor) | Focus word | `a` | Comment focused / hovered target |
-| `[` / `]` | Previous / next comment | `e` / `x` | Edit / remove active comment |
+| `[` / `]` | Previous / next comment | `e` / `x` | Edit / remove active draft comment |
+| `s` | Send draft comments to Pi (connected review) |  |  |
 | `n` / `N` | Next / prev match | `Double-Click` (link) | Copy link |
 | `w` | Toggle watch mode | `Double-Click` (code) | Copy code block |
 | `r` | Force reload (watch mode) | `Shift+Drag` | Select text |
@@ -345,7 +373,7 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 ## Features
 
 - **Live preview** : *Watch mode with automatic reload and visual feedback*.
-- **Review comments (POC)** : *Focus a line or word with the keyboard, then add, browse, edit, and remove comments in the TUI. Comments are intentionally local to the currently open document and are not persisted*.
+- **Review comments** : *Focus a line or word, add comments in the TUI, and send them to Pi with location metadata. Connected reviews stay open, auto-reload agent edits, and visibly mark addressed comments; standalone comments remain local to the current document*.
 - **File picker** : *Fuzzy Markdown picker, directory browser, and watch after selection*.
 - **File history** : *Recently opened files stored in `history.toml`, picker via `Ctrl+H` or `leaf --history`*.
 - **Editor integration** : *Open the current file in your preferred editor*.

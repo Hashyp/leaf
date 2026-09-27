@@ -246,6 +246,7 @@ fn main() -> Result<()> {
         history,
         fuzzy: _fuzzy,
         fuzzy_query,
+        review_channel,
         ..
     } = options;
     let mut fuzzy_initial_query = fuzzy_query;
@@ -386,7 +387,7 @@ fn main() -> Result<()> {
     };
 
     let is_file_input = filepath.is_some();
-    let watch = watch_from_cli || (watch_from_config && is_file_input);
+    let watch = watch_from_cli || review_channel.is_some() || (watch_from_config && is_file_input);
 
     let ss = SyntaxSet::load_defaults_newlines();
     let ts = ThemeSet::load_defaults();
@@ -504,6 +505,10 @@ fn main() -> Result<()> {
     app.set_editor_config(Some(resolved_editor));
     app.set_code_line_numbers(code_line_numbers);
     app.set_config_warning(config_warning);
+    if let Some(channel) = review_channel {
+        app.connect_review_bridge(PathBuf::from(channel))
+            .context("Cannot connect to Pi review channel")?;
+    }
     if let Some(dir) = dir_arg {
         app.set_dir_arg(dir);
     }

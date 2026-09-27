@@ -1,4 +1,8 @@
-use crate::{app::App, markdown::display_width, theme::app_theme};
+use crate::{
+    app::{App, ReviewAgentState, ReviewCommentStatus},
+    markdown::display_width,
+    theme::app_theme,
+};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -17,8 +21,31 @@ pub(super) fn render_comments_panel(f: &mut Frame, app: &App, area: Rect) {
     let max_scroll = lines.len().saturating_sub(visible_height);
     let scroll = active_start.saturating_sub(1).min(max_scroll) as u16;
 
+    let title = if app.is_review_bridge_connected() {
+        match app.review_agent_state() {
+            ReviewAgentState::Working { comment_count, .. } => {
+                format!(
+                    "─ Comments {} · Pi addressing {comment_count} ",
+                    app.comment_count()
+                )
+            }
+            ReviewAgentState::Disconnected(_) => {
+                format!("─ Comments {} · Pi disconnected ", app.comment_count())
+            }
+            ReviewAgentState::Error(_) => {
+                format!("─ Comments {} · needs attention ", app.comment_count())
+            }
+            ReviewAgentState::Ready => format!(
+                "─ Comments {} · {} addressed ",
+                app.comment_count(),
+                app.addressed_comment_count()
+            ),
+        }
+    } else {
+        format!("─ Comments {} · local only ", app.comment_count())
+    };
     let block = Block::default()
-        .title(format!("─ Comments {} · local only ", app.comment_count()))
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.ui.toc_border))
         .style(Style::default().bg(theme.ui.toc_bg))
@@ -72,13 +99,21 @@ pub(super) fn render_comment_composer(f: &mut Frame, app: &App) {
         Paragraph::new(vec![
             Line::from(vec![
                 Span::styled(
-                    "UI prototype",
+                    if app.is_review_bridge_connected() {
+                        "Pi review"
+                    } else {
+                        "UI prototype"
+                    },
                     Style::default()
                         .fg(theme.ui.toc_accent)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "  Comments live only for this open document.",
+                    if app.is_review_bridge_connected() {
+                        "  Save comments, then press s to send them."
+                    } else {
+                        "  Comments live only for this open document."
+                    },
                     Style::default().fg(theme.ui.toc_secondary_text_inactive),
                 ),
             ]),
@@ -166,13 +201,23 @@ pub(super) fn comment_panel_lines(app: &App, width: usize) -> (Vec<Line<'static>
         } else {
             theme.ui.toc_bg
         };
-        let marker = if active { "◆" } else { "●" };
+        let (marker, marker_color, status_label) = match (&comment.status, active) {
+            (ReviewCommentStatus::Draft, false) => ("●", theme.ui.toc_accent, ""),
+            (ReviewCommentStatus::Draft, true) => ("◆", theme.ui.toc_accent, ""),
+            (ReviewCommentStatus::Submitted { .. }, false) => {
+                ("◌", theme.ui.status_warning_fg, "  sent")
+            }
+            (ReviewCommentStatus::Submitted { .. }, true) => {
+                ("◈", theme.ui.status_warning_fg, "  sent")
+            }
+            (ReviewCommentStatus::Addressed, _) => ("✓", theme.ui.status_success_fg, "  addressed"),
+        };
         lines.push(padded_line(
             vec![
                 Span::styled(
                     format!("{marker} "),
                     Style::default()
-                        .fg(theme.ui.toc_accent)
+                        .fg(marker_color)
                         .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 ),
@@ -189,6 +234,7 @@ pub(super) fn comment_panel_lines(app: &App, width: usize) -> (Vec<Line<'static>
                         .fg(theme.ui.toc_secondary_text_inactive)
                         .bg(bg),
                 ),
+                Span::styled(status_label, Style::default().fg(marker_color).bg(bg)),
             ],
             width,
             bg,
@@ -198,11 +244,15 @@ pub(super) fn comment_panel_lines(app: &App, width: usize) -> (Vec<Line<'static>
             for selected_line in wrap_comment_text(selected_text, width.saturating_sub(4).max(1)) {
                 lines.push(padded_line(
                     vec![
-                        Span::styled("  › ", Style::default().fg(theme.ui.toc_accent).bg(bg)),
+                        Span::styled("  › ", Style::default().fg(marker_color).bg(bg)),
                         Span::styled(
                             selected_line,
                             Style::default()
-                                .fg(theme.markdown.link_hover)
+                                .fg(if comment.status.is_addressed() {
+                                    theme.ui.toc_secondary_text_inactive
+                                } else {
+                                    theme.markdown.link_hover
+                                })
                                 .bg(bg)
                                 .add_modifier(Modifier::ITALIC),
                         ),
@@ -219,7 +269,13 @@ pub(super) fn comment_panel_lines(app: &App, width: usize) -> (Vec<Line<'static>
                     Span::styled("  ", Style::default().fg(theme.ui.toc_border).bg(bg)),
                     Span::styled(
                         body_line,
-                        Style::default().fg(theme.ui.toc_primary_inactive).bg(bg),
+                        Style::default()
+                            .fg(if comment.status.is_addressed() {
+                                theme.ui.toc_secondary_text_inactive
+                            } else {
+                                theme.ui.toc_primary_inactive
+                            })
+                            .bg(bg),
                     ),
                 ],
                 width,

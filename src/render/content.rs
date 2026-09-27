@@ -140,6 +140,26 @@ pub(super) fn render_content_panel(f: &mut Frame, app: &mut App, area: Rect) {
                     .fg(theme.ui.toc_accent)
                     .add_modifier(Modifier::BOLD),
             ),
+            CommentGutterState::Submitted => (
+                "◌   ".to_string(),
+                Style::default().fg(theme.ui.status_warning_fg),
+            ),
+            CommentGutterState::SubmittedActive => (
+                "◈   ".to_string(),
+                Style::default()
+                    .fg(theme.ui.status_warning_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            CommentGutterState::Addressed => (
+                "✓   ".to_string(),
+                Style::default().fg(theme.ui.status_success_fg),
+            ),
+            CommentGutterState::AddressedActive => (
+                "✓   ".to_string(),
+                Style::default()
+                    .fg(theme.ui.status_success_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
         };
         line.spans.insert(0, Span::styled(symbol, style));
     }

@@ -58,6 +58,10 @@ mod code_blocks;
 mod comments;
 pub(crate) use comments::{CommentComposer, CommentCursor, CommentGutterState, ReviewComment};
 
+mod review_bridge;
+use review_bridge::ReviewBridge;
+pub(crate) use review_bridge::{ReviewAgentState, ReviewCommentStatus};
+
 mod io_picker;
 
 mod theme_picker;
@@ -105,7 +109,10 @@ pub(crate) struct StatusCacheKey {
     history_flash_active: bool,
     comment_mode: bool,
     comment_count: usize,
+    addressed_comment_count: usize,
+    draft_comment_count: usize,
     active_comment_id: Option<u64>,
+    review_state_key: String,
     comment_cursor_line: Option<usize>,
     comment_cursor_word: Option<usize>,
     mouse_capture: bool,
@@ -192,6 +199,8 @@ pub(crate) struct App {
     pub(super) comment_composer: Option<CommentComposer>,
     pub(super) comment_cursor: Option<CommentCursor>,
     pub(super) hovered_content_line: Option<usize>,
+    pub(super) review_bridge: Option<ReviewBridge>,
+    pub(super) review_agent_state: ReviewAgentState,
     pub(super) path_copy_flash: Option<(PathKind, bool, Instant)>,
     pub(super) path_popup_hover: Option<PathKind>,
     pub(crate) path_popup_rel_area: Option<Rect>,
@@ -365,6 +374,8 @@ impl App {
             comment_composer: None,
             comment_cursor: None,
             hovered_content_line: None,
+            review_bridge: None,
+            review_agent_state: ReviewAgentState::Ready,
             path_copy_flash: None,
             path_popup_hover: None,
             path_popup_rel_area: None,
@@ -757,7 +768,10 @@ impl App {
                 .unwrap_or(false),
             comment_mode: self.is_comment_composer_open(),
             comment_count: self.comment_count(),
+            addressed_comment_count: self.addressed_comment_count(),
+            draft_comment_count: self.draft_comment_count(),
             active_comment_id: self.active_comment_id(),
+            review_state_key: self.review_agent_state().cache_key(),
             comment_cursor_line: self.comment_cursor().map(|cursor| cursor.rendered_line),
             comment_cursor_word: self.comment_cursor().and_then(|cursor| cursor.word_index),
             mouse_capture: self.mouse_capture,

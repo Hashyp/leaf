@@ -77,6 +77,11 @@ impl App {
             self.set_watch_flash(WatchFlash::FileNotFound);
             return;
         }
+        if self.is_review_bridge_connected() {
+            self.watch = true;
+            self.set_watch_flash(WatchFlash::Activated);
+            return;
+        }
         self.watch = !self.watch;
         self.set_watch_flash(if self.watch {
             WatchFlash::Activated

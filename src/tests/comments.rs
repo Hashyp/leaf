@@ -1,7 +1,16 @@
-use crate::app::{App, CommentGutterState};
+use crate::app::{App, CommentGutterState, ReviewAgentState, ReviewCommentStatus};
 use ratatui::{backend::TestBackend, buffer::Buffer, layout::Rect, text::Line, Terminal};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn comment_app() -> App {
+    comment_app_with_path(None)
+}
+
+fn comment_app_with_path(filepath: Option<PathBuf>) -> App {
     let lines = vec![
         Line::from("one"),
         Line::from("two"),
@@ -15,7 +24,7 @@ fn comment_app() -> App {
         "review.md".to_string(),
         false,
         false,
-        None,
+        filepath,
         None,
     );
     app.set_line_maps(vec![1, 2, 2, 3, 4], vec![1, 2, 2, 3, 4]);
@@ -49,6 +58,25 @@ fn buffer_text(buffer: &Buffer) -> String {
         text.push('\n');
     }
     text
+}
+
+fn unique_temp_dir(label: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    std::env::temp_dir().join(format!("leaf-{label}-{}-{nonce}", std::process::id()))
+}
+
+fn only_json_file(directory: &std::path::Path) -> PathBuf {
+    let files = fs::read_dir(directory)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 1);
+    files[0].clone()
 }
 
 #[test]
@@ -223,4 +251,220 @@ fn composer_renders_target_and_ephemeral_scope() {
     assert!(output.contains("Comments live only for this open document"));
     assert!(output.contains("Target: “one”"));
     assert!(output.contains("Looks good"));
+}
+
+#[test]
+fn connected_review_publishes_structured_metadata_and_marks_comments_submitted() {
+    let root = unique_temp_dir("review-request");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\ntwo wrapped\nthree\n").unwrap();
+
+    let mut app = comment_app_with_path(Some(document.canonicalize().unwrap()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    assert!(app.is_watch_enabled());
+    app.toggle_watch();
+    assert!(
+        app.is_watch_enabled(),
+        "Pi review must keep live reload enabled"
+    );
+    assert!(app.start_comment_cursor());
+    assert!(app.move_comment_cursor_down());
+    assert!(app.move_comment_cursor_word_next());
+    assert!(app.begin_comment_at_focus());
+    for ch in "Make this more concrete".chars() {
+        app.push_comment_char(ch);
+    }
+    assert!(app.save_comment());
+
+    assert!(app.submit_review());
+
+    let request_path = only_json_file(&channel.join("requests"));
+    let request: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(request_path).unwrap()).unwrap();
+    assert_eq!(request["protocol_version"], 1);
+    assert_eq!(request["type"], "review_request");
+    assert_eq!(
+        request["document"]["path"],
+        document.canonicalize().unwrap().display().to_string()
+    );
+    assert_eq!(request["comments"][0]["id"], 1);
+    assert_eq!(request["comments"][0]["body"], "Make this more concrete");
+    assert_eq!(request["comments"][0]["target"]["source_line"], 2);
+    assert_eq!(request["comments"][0]["target"]["source_line_text"], "two");
+    assert_eq!(request["comments"][0]["target"]["rendered_line"], 2);
+    assert_eq!(request["comments"][0]["target"]["selection"]["text"], "two");
+    assert_eq!(
+        request["comments"][0]["target"]["selection"]["rendered_start_column"],
+        1
+    );
+    assert_eq!(
+        request["comments"][0]["target"]["selection"]["rendered_end_column_exclusive"],
+        4
+    );
+    assert!(request["document"]["revision"]
+        .as_str()
+        .is_some_and(|revision| !revision.is_empty()));
+    assert_eq!(
+        request["comments"][0]["context"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|line| line["is_target"] == true)
+            .count(),
+        1
+    );
+    assert!(matches!(
+        app.comments()[0].status,
+        ReviewCommentStatus::Submitted { .. }
+    ));
+    assert!(matches!(
+        app.review_agent_state(),
+        ReviewAgentState::Working {
+            comment_count: 1,
+            ..
+        }
+    ));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn completion_event_marks_only_confirmed_comments_addressed() {
+    let _guard = super::lock_theme_test_state();
+    let root = unique_temp_dir("review-complete");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\ntwo wrapped\nthree\n").unwrap();
+
+    let mut app = comment_app_with_path(Some(document.clone()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    let first_id = add_comment(&mut app, 0, "First");
+    let second_id = add_comment(&mut app, 3, "Second");
+    assert!(app.submit_review());
+    let request_path = only_json_file(&channel.join("requests"));
+    let request: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(request_path).unwrap()).unwrap();
+    let request_id = request["request_id"].as_str().unwrap();
+
+    fs::write(&document, "# Updated by Pi\n\nNewer document text.\n").unwrap();
+    let syntax_set = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let theme_set = syntect::highlighting::ThemeSet::load_defaults();
+    assert!(app.reload(&syntax_set, &theme_set));
+    assert!(app.source.contains("Newer document text."));
+    assert_eq!(app.comment_count(), 2);
+    assert!(app
+        .comments()
+        .iter()
+        .all(|comment| matches!(comment.status, ReviewCommentStatus::Submitted { .. })));
+
+    fs::write(
+        channel.join("events/001-complete.json"),
+        serde_json::json!({
+            "protocol_version": 1,
+            "type": "review_completed",
+            "request_id": request_id,
+            "addressed_comment_ids": [first_id]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    assert!(app.poll_review_bridge());
+    assert_eq!(app.addressed_comment_count(), 1);
+    assert_eq!(app.draft_comment_count(), 1);
+    assert!(app.comments().iter().any(|comment| {
+        comment.id == first_id && comment.status == ReviewCommentStatus::Addressed
+    }));
+    assert!(app.comments().iter().any(|comment| {
+        comment.id == second_id && comment.status == ReviewCommentStatus::Draft
+    }));
+    assert!(matches!(
+        app.review_agent_state(),
+        ReviewAgentState::Error(_)
+    ));
+
+    let output = buffer_text(&draw(&mut app, 110, 24));
+    assert!(output.contains("addressed"));
+    assert!(output.contains("needs attention"));
+    assert!(output.contains("✓"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_review_returns_submitted_comments_to_draft() {
+    let root = unique_temp_dir("review-failed");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\n").unwrap();
+
+    let mut app = comment_app_with_path(Some(document));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    add_comment(&mut app, 0, "Change this");
+    assert!(app.submit_review());
+    let request_path = only_json_file(&channel.join("requests"));
+    let request: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(request_path).unwrap()).unwrap();
+    let request_id = request["request_id"].as_str().unwrap();
+
+    fs::write(
+        channel.join("events/001-failed.json"),
+        serde_json::json!({
+            "protocol_version": 1,
+            "type": "review_failed",
+            "request_id": request_id,
+            "message": "Agent stopped before confirming the edit"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    assert!(app.poll_review_bridge());
+    assert_eq!(app.comments()[0].status, ReviewCommentStatus::Draft);
+    assert!(matches!(
+        app.review_agent_state(),
+        ReviewAgentState::Error(_)
+    ));
+    assert!(app.edit_active_comment());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn closing_the_pi_bridge_leaves_the_document_open() {
+    let root = unique_temp_dir("review-disconnected");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\n").unwrap();
+
+    let mut app = comment_app_with_path(Some(document.clone()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    add_comment(&mut app, 0, "Change this");
+    assert!(app.submit_review());
+    fs::write(
+        channel.join("events/001-closed.json"),
+        serde_json::json!({
+            "protocol_version": 1,
+            "type": "bridge_closed",
+            "message": "The Pi session ended; Leaf was left open"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    assert!(app.poll_review_bridge());
+    assert!(app.has_content());
+    assert_eq!(app.filepath(), Some(document.as_path()));
+    assert_eq!(app.comments()[0].status, ReviewCommentStatus::Draft);
+    assert!(matches!(
+        app.review_agent_state(),
+        ReviewAgentState::Disconnected(message) if message.contains("left open")
+    ));
+
+    fs::remove_dir_all(root).unwrap();
 }

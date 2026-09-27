@@ -1,8 +1,8 @@
 use crate::{
     app::{
         history::{msg_history_capped, MSG_HISTORY_WRITE_FAILED},
-        App, CodeBlockFlash, EditorFlash, HistoryFlash, LinkFlash, PathFlash, WatchFlash,
-        FLASH_DURATION_MS,
+        App, CodeBlockFlash, EditorFlash, HistoryFlash, LinkFlash, PathFlash, ReviewAgentState,
+        WatchFlash, FLASH_DURATION_MS,
     },
     theme::app_theme,
 };
@@ -167,6 +167,39 @@ pub(crate) fn status_comment_section(app: &App) -> Option<Vec<Span<'static>>> {
                 .bg(theme.ui.status_search_bg),
         )]);
     }
+    if app.is_review_bridge_connected() {
+        return match app.review_agent_state() {
+            ReviewAgentState::Working { comment_count, .. } => Some(vec![Span::styled(
+                format!(" ◌ Pi addressing {comment_count} "),
+                Style::default()
+                    .fg(theme.ui.status_warning_fg)
+                    .bg(theme.ui.status_bg),
+            )]),
+            ReviewAgentState::Error(message) => Some(vec![Span::styled(
+                format!(" ✗ review: {} ", short_status_message(message)),
+                Style::default()
+                    .fg(theme.ui.status_error_fg)
+                    .bg(theme.ui.status_error_bg),
+            )]),
+            ReviewAgentState::Disconnected(_) => Some(vec![Span::styled(
+                " ✗ Pi disconnected ",
+                Style::default()
+                    .fg(theme.ui.status_error_fg)
+                    .bg(theme.ui.status_error_bg),
+            )]),
+            ReviewAgentState::Ready if app.comment_count() > 0 => Some(vec![Span::styled(
+                format!(
+                    " ● {} · ✓ {} ",
+                    app.draft_comment_count(),
+                    app.addressed_comment_count()
+                ),
+                Style::default()
+                    .fg(theme.ui.status_success_fg)
+                    .bg(theme.ui.status_success_bg),
+            )]),
+            ReviewAgentState::Ready => None,
+        };
+    }
     if app.comment_count() == 0 {
         return None;
     }
@@ -176,6 +209,14 @@ pub(crate) fn status_comment_section(app: &App) -> Option<Vec<Span<'static>>> {
             .fg(theme.ui.status_success_fg)
             .bg(theme.ui.status_success_bg),
     )])
+}
+
+fn short_status_message(message: &str) -> String {
+    const MAX_CHARS: usize = 34;
+    if message.chars().count() <= MAX_CHARS {
+        return message.to_string();
+    }
+    format!("{}…", message.chars().take(MAX_CHARS).collect::<String>())
 }
 
 pub(crate) fn status_goto_line_section(app: &App) -> Option<Vec<Span<'static>>> {
@@ -220,6 +261,12 @@ pub(crate) fn status_hint_segments(app: &App) -> &'static [&'static str] {
         &["j/k line", "h/l word", "a comment", "esc cancel"]
     } else if app.is_goto_line_mode() || app.is_search_mode() {
         &["enter confirm", "esc cancel"]
+    } else if app.review_agent_state().is_working() {
+        &["Pi is addressing comments", "[/] browse"]
+    } else if matches!(app.review_agent_state(), ReviewAgentState::Disconnected(_)) {
+        &["Pi disconnected", "[/] browse", "q quit"]
+    } else if app.is_review_bridge_connected() && app.draft_comment_count() > 0 {
+        &["s send review", "v focus", "[/] browse", "q quit"]
     } else if app.has_active_goto_line() {
         &["esc cancel"]
     } else if app.has_active_search() {
