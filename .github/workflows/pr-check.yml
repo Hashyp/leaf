@@ -1,0 +1,103 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: pr-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-check:
+    name: PR check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate commit count
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAX_COMMITS: 1
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          MARKER="<!-- pr-check:commits -->"
+
+          COUNT=$(gh api \
+            "repos/${{ github.repository }}/pulls/$PR_NUMBER" \
+            --jq '.commits')
+          echo "Commits: $COUNT (limit: $MAX_COMMITS)"
+
+          EXISTING=$(gh api --paginate \
+            "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1)
+
+          if [ "$COUNT" -gt "$MAX_COMMITS" ]; then
+            echo "::warning::PR has $COUNT commits (limit: $MAX_COMMITS)."
+            WARN=(
+              "$MARKER"
+              "> [!WARNING]"
+              "> This PR has $COUNT commits (limit: $MAX_COMMITS)."
+              "> Maintainers will squash them on merge."
+            )
+            BODY=$(printf '%s\n' "${WARN[@]}")
+
+            if [ -n "$EXISTING" ]; then
+              gh api --method PATCH \
+                "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+                -f body="$BODY"
+            else
+              gh pr comment "$PR_NUMBER" --body "$BODY"
+            fi
+          else
+            echo "Valid commit count"
+            if [ -n "$EXISTING" ]; then
+              gh api --method DELETE \
+                "repos/${{ github.repository }}/issues/comments/$EXISTING"
+            fi
+          fi
+
+      - name: Validate commit signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          MARKER="<!-- pr-check:signature -->"
+
+          VERIFIED=$(gh api \
+            "repos/${{ github.repository }}/commits/$PR_SHA" \
+            --jq '.commit.verification.verified')
+
+          EXISTING=$(gh api --paginate \
+            "repos/${{ github.repository }}/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -1)
+
+          if [ "$VERIFIED" = "true" ]; then
+            echo "Valid commit signature"
+            if [ -n "$EXISTING" ]; then
+              gh api --method DELETE \
+                "repos/${{ github.repository }}/issues/comments/$EXISTING"
+            fi
+          else
+            echo "::warning::Unsigned commit, maintainer will re-sign on merge."
+            WARN=(
+              "$MARKER"
+              "> [!WARNING]"
+              "> The head commit isn't GPG-signed."
+              "> Maintainers will re-sign it on merge."
+            )
+            BODY=$(printf '%s\n' "${WARN[@]}")
+
+            if [ -n "$EXISTING" ]; then
+              gh api --method PATCH \
+                "repos/${{ github.repository }}/issues/comments/$EXISTING" \
+                -f body="$BODY"
+            else
+              gh pr comment "$PR_NUMBER" --body "$BODY"
+            fi
+          fi
