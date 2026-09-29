@@ -108,14 +108,15 @@ impl App {
         );
 
         let first_load = self.filepath.is_none();
-        let changed_review_document = self
-            .filepath
-            .as_ref()
-            .is_some_and(|current| current != &path);
-        if changed_review_document {
+        let same_document = self.filepath.as_ref().is_some_and(|current| {
+            current == &path
+                || matches!((current.canonicalize(), path.canonicalize()),
+                    (Ok(current), Ok(next)) if current == next)
+        });
+        if !same_document {
             self.review_bridge = None;
+            self.clear_comments_for_document();
         }
-        self.clear_comments_for_document();
         self.filename = filename;
         self.source = src;
         if let Some(n) = self.file_history_length.filter(|n| *n > 0) {

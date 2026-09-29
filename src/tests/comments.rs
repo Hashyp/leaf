@@ -435,6 +435,170 @@ fn failed_review_returns_submitted_comments_to_draft() {
 }
 
 #[test]
+fn review_resubmission_preserves_the_original_target_snapshot() {
+    let root = unique_temp_dir("review-snapshot");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\nthree\n").unwrap();
+    let mut app = comment_app_with_path(Some(document.clone()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    add_comment(&mut app, 1, "Clarify the second line");
+    assert!(app.submit_review());
+    let request_path = only_json_file(&channel.join("requests"));
+    let first: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&request_path).unwrap()).unwrap();
+    fs::remove_file(request_path).unwrap();
+    fs::write(
+        channel.join("events/001-partial.json"),
+        serde_json::json!({
+            "protocol_version": 1,
+            "type": "review_completed",
+            "request_id": first["request_id"],
+            "addressed_comment_ids": []
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(app.poll_review_bridge());
+
+    fs::write(&document, "inserted\none\ntwo\nthree\n").unwrap();
+    let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let themes = syntect::highlighting::ThemeSet::load_defaults();
+    assert!(app.reload(&ss, &themes));
+    assert!(app.edit_active_comment());
+    app.push_comment_char('!');
+    assert!(app.save_comment());
+    assert!(app.submit_review());
+    let second: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(only_json_file(&channel.join("requests"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        second["comments"][0]["target"],
+        first["comments"][0]["target"]
+    );
+    assert_eq!(
+        second["comments"][0]["context"],
+        first["comments"][0]["context"]
+    );
+    assert_eq!(second["comments"][0]["target"]["source_line_text"], "two");
+    assert_eq!(
+        second["comments"][0]["target"]["source_revision"],
+        first["document"]["revision"]
+    );
+    assert_ne!(
+        second["document"]["revision"],
+        first["document"]["revision"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn composer_keeps_its_target_when_the_document_reloads_before_save() {
+    let root = unique_temp_dir("composer-snapshot");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\nthree\n").unwrap();
+    let mut app = comment_app_with_path(Some(document.clone()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    assert!(app.begin_comment_at_rendered_line(1));
+    app.push_comment_char('x');
+    fs::write(&document, "inserted\none\ntwo\nthree\n").unwrap();
+    let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let themes = syntect::highlighting::ThemeSet::load_defaults();
+    assert!(app.reload(&ss, &themes));
+    assert!(app.save_comment());
+    assert!(app.submit_review());
+    let request: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(only_json_file(&channel.join("requests"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(request["comments"][0]["target"]["source_line_text"], "two");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn oversized_review_stays_editable_and_is_not_published() {
+    let root = unique_temp_dir("review-size");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    let source = "x".repeat(600 * 1024);
+    fs::write(&document, &source).unwrap();
+    let mut app = comment_app_with_path(Some(document));
+    app.source = source;
+    app.connect_review_bridge(channel.clone()).unwrap();
+    add_comment(&mut app, 0, "Short comment on a large source line");
+    assert!(!app.submit_review());
+    assert!(
+        matches!(app.review_agent_state(), ReviewAgentState::Error(message) if message.contains("1 MiB"))
+    );
+    assert_eq!(app.comments()[0].status, ReviewCommentStatus::Draft);
+    assert!(app.edit_active_comment());
+    assert_eq!(fs::read_dir(channel.join("requests")).unwrap().count(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn loading_the_current_document_preserves_an_in_flight_review() {
+    let root = unique_temp_dir("review-same-file");
+    let document = root.join("review.md");
+    let channel = root.join("channel");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(&document, "one\ntwo\nthree\n").unwrap();
+    let mut app = comment_app_with_path(Some(document.clone()));
+    app.connect_review_bridge(channel.clone()).unwrap();
+    let id = add_comment(&mut app, 1, "Keep this review");
+    assert!(app.submit_review());
+    let before = app.comments().to_vec();
+    let state = app.review_agent_state().clone();
+    let request: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(only_json_file(&channel.join("requests"))).unwrap(),
+    )
+    .unwrap();
+    let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+    let themes = syntect::highlighting::ThemeSet::load_defaults();
+    assert!(app.load_path(document.clone(), &ss, &themes));
+    assert_eq!(app.comments(), before);
+    assert_eq!(app.review_agent_state(), &state);
+    assert!(app.is_review_bridge_connected());
+    fs::write(
+        channel.join("events/001-complete.json"),
+        serde_json::json!({
+            "protocol_version": 1,
+            "type": "review_completed",
+            "request_id": request["request_id"],
+            "addressed_comment_ids": [id]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    assert!(app.poll_review_bridge());
+    assert_eq!(app.addressed_comment_count(), 1);
+    add_comment(&mut app, 0, "Unsent draft");
+    assert!(app.load_path(document.clone(), &ss, &themes));
+    assert_eq!(app.addressed_comment_count(), 1);
+    assert_eq!(app.draft_comment_count(), 1);
+    #[cfg(unix)]
+    {
+        let alias = root.join("alias.md");
+        std::os::unix::fs::symlink(&document, &alias).unwrap();
+        assert!(app.load_path(alias, &ss, &themes));
+        assert_eq!(app.addressed_comment_count(), 1);
+        assert_eq!(app.draft_comment_count(), 1);
+        assert!(app.is_review_bridge_connected());
+    }
+    let other = root.join("other.md");
+    fs::write(&other, "another document\n").unwrap();
+    assert!(app.load_path(other, &ss, &themes));
+    assert_eq!(app.comment_count(), 0);
+    assert!(!app.is_review_bridge_connected());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn closing_the_pi_bridge_leaves_the_document_open() {
     let root = unique_temp_dir("review-disconnected");
     let document = root.join("review.md");

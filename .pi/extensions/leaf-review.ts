@@ -30,6 +30,7 @@ import {
 const PROTOCOL_VERSION = 1;
 const POLL_INTERVAL_MS = 150;
 const MAX_REQUEST_BYTES = 1024 * 1024;
+const CLIENT_START_TIMEOUT_MS = 10_000;
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx", ".markdown"]);
 const COMPLETION_TOOL = "leaf_review_complete";
 
@@ -46,11 +47,13 @@ type ReviewChannel = {
 	root: string;
 	requestsDir: string;
 	eventsDir: string;
+	startedAtMs: number;
 };
 
 type ReviewTarget = {
 	source_line: number;
 	source_line_text: string;
+	source_revision?: string;
 	rendered_line: number;
 	selection?: {
 		text: string;
@@ -196,10 +199,7 @@ function terminalLaunchSpec(
 				args: ["new-tab", "--title", title, leafBinary, ...leafArgs],
 			};
 		}
-		return {
-			command: "cmd.exe",
-			args: ["/d", "/c", "start", "", leafBinary, ...leafArgs],
-		};
+		return null;
 	}
 
 	const builders: Record<string, () => LaunchSpec> = {
@@ -272,6 +272,36 @@ function terminalLaunchSpec(
 	return null;
 }
 
+function reviewClientState(channel: ReviewChannel): "connected" | "starting" | "closed" {
+	const clientPath = join(channel.root, "client.json");
+	if (!existsSync(clientPath)) {
+		return Date.now() - channel.startedAtMs < CLIENT_START_TIMEOUT_MS ? "starting" : "closed";
+	}
+	try {
+		const client: unknown = JSON.parse(readFileSync(clientPath, "utf8"));
+		if (
+			!client || typeof client !== "object" ||
+			!("protocol_version" in client) || client.protocol_version !== PROTOCOL_VERSION ||
+			!("document_path" in client) || typeof client.document_path !== "string" ||
+			canonicalPath(client.document_path) !== channel.documentPath ||
+			!("process_id" in client) || typeof client.process_id !== "number" ||
+			!Number.isSafeInteger(client.process_id) || client.process_id <= 0
+		) {
+			return "closed";
+		}
+		try {
+			process.kill(client.process_id, 0);
+			return "connected";
+		} catch (error) {
+			return error instanceof Error && "code" in error && error.code === "EPERM"
+				? "connected"
+				: "closed";
+		}
+	} catch {
+		return "closed";
+	}
+}
+
 function validReviewRequest(value: unknown, channel: ReviewChannel): value is ReviewRequest {
 	if (!value || typeof value !== "object") return false;
 	const request = value as Partial<ReviewRequest>;
@@ -300,7 +330,7 @@ function validReviewRequest(value: unknown, channel: ReviewChannel): value is Re
 }
 
 function reviewPrompt(request: ReviewRequest): string {
-	return `[Leaf document review]\n\nThe user reviewed the Markdown document below in Leaf and submitted root-level comments. Address these comments in the existing file. Do not add replies to comments or start a discussion thread; this integration currently supports addressing comments only.\n\nDocument: ${request.document.path}\nReview request: ${request.request_id}\nDocument revision at submission: ${request.document.revision}\n\nStructured review metadata:\n\n\`\`\`json\n${JSON.stringify(request, null, 2)}\n\`\`\`\n\nInstructions:\n1. Inspect the current document before editing because it may have changed after the review snapshot.\n2. Address each submitted comment in place, using its source line, selected text, exact source line text, rendered coordinates, and surrounding context to locate the target. Rendered lines and columns are 1-based; rendered_end_column_exclusive is the exclusive endpoint.\n3. Keep unrelated document content intact and validate the resulting Markdown.\n4. Only after the edits are complete, call ${COMPLETION_TOOL} exactly once with this request id and the ids of comments you actually addressed. This completion call keeps Leaf open, refreshes the document, and marks those comments addressed.\n5. If a comment cannot be addressed, omit its id from the completion call and explain why in your final response.`;
+	return `[Leaf document review]\n\nThe user reviewed the Markdown document below in Leaf and submitted root-level comments. Address these comments in the existing file. Do not add replies to comments or start a discussion thread; this integration currently supports addressing comments only.\n\nDocument: ${request.document.path}\nReview request: ${request.request_id}\nDocument revision at submission: ${request.document.revision}\nEach comment's target.source_revision identifies its original snapshot. Its source/rendered coordinates, source line text, and context refer to that snapshot, not necessarily the current document. Locate the original target by text and context rather than blindly applying stale line numbers.\n\nStructured review metadata:\n\n\`\`\`json\n${JSON.stringify(request, null, 2)}\n\`\`\`\n\nInstructions:\n1. Inspect the current document before editing because it may have changed after the review snapshot.\n2. Address each submitted comment in place, using its source line, selected text, exact source line text, rendered coordinates, and surrounding context to locate the target. Rendered lines and columns are 1-based; rendered_end_column_exclusive is the exclusive endpoint.\n3. Keep unrelated document content intact and validate the resulting Markdown.\n4. Only after the edits are complete, call ${COMPLETION_TOOL} exactly once with this request id and the ids of comments you actually addressed. This completion call keeps Leaf open, refreshes the document, and marks those comments addressed.\n5. If a comment cannot be addressed, omit its id from the completion call and explain why in your final response.`;
 }
 
 export default function leafReviewExtension(pi: ExtensionAPI): void {
@@ -357,7 +387,11 @@ export default function leafReviewExtension(pi: ExtensionAPI): void {
 
 	function ensureReview(documentPath: string, ctx: ExtensionContext): void {
 		const canonical = canonicalPath(documentPath);
-		if (channels.has(canonical)) return;
+		const existing = channels.get(canonical);
+		if (existing) {
+			if (reviewClientState(existing) !== "closed") return;
+			channels.delete(canonical);
+		}
 		if (!sessionRoot) return;
 
 		const leafBinary = resolveLeafBinary(ctx.cwd);
@@ -370,12 +404,13 @@ export default function leafReviewExtension(pi: ExtensionAPI): void {
 		}
 
 		const channelId = createHash("sha256").update(canonical).digest("hex").slice(0, 16);
-		const root = join(sessionRoot, channelId);
+		const root = join(sessionRoot, `${channelId}-${randomBytes(4).toString("hex")}`);
 		const channel: ReviewChannel = {
 			documentPath: canonical,
 			root,
 			requestsDir: join(root, "requests"),
 			eventsDir: join(root, "events"),
+			startedAtMs: Date.now(),
 		};
 		mkdirSync(channel.requestsDir, { recursive: true, mode: 0o700 });
 		mkdirSync(channel.eventsDir, { recursive: true, mode: 0o700 });
@@ -402,20 +437,24 @@ export default function leafReviewExtension(pi: ExtensionAPI): void {
 			detached: true,
 			stdio: "ignore",
 		});
-		child.once("error", (error) => {
+		function launchFailed(message: string): void {
+			if (channels.get(canonical) !== channel) return;
 			channels.delete(canonical);
 			try {
-				writeEvent(channel, {
-					type: "bridge_closed",
-					message: `Could not launch Leaf: ${error.message}`,
-				});
+				writeEvent(channel, { type: "bridge_closed", message: `Could not launch Leaf: ${message}` });
 			} catch {
 				// The Pi notification below is the useful failure path.
 			}
 			try {
-				ctx.ui.notify(`Leaf review could not launch: ${error.message}`, "error");
+				ctx.ui.notify(`Leaf review could not launch: ${message}`, "error");
 			} catch {
-				console.error(`Leaf review could not launch: ${error.message}`);
+				console.error(`Leaf review could not launch: ${message}`);
+			}
+		}
+		child.once("error", (error) => launchFailed(error.message));
+		child.once("exit", (code, signal) => {
+			if (code !== 0 && reviewClientState(channel) !== "connected") {
+				launchFailed(signal ? `launcher terminated by ${signal}` : `launcher exited with code ${code}`);
 			}
 		});
 		child.unref();
@@ -470,23 +509,40 @@ export default function leafReviewExtension(pi: ExtensionAPI): void {
 				}
 				for (const name of names) {
 					const requestPath = join(channel.requestsDir, name);
+					const requestId = /^request-([a-zA-Z0-9_-]+)\.json$/.exec(name)?.[1];
+					let consumed = false;
 					try {
 						if (statSync(requestPath).size > MAX_REQUEST_BYTES) {
 							throw new Error("review request exceeds 1 MiB");
 						}
 						const parsed: unknown = JSON.parse(readFileSync(requestPath, "utf8"));
-						if (!validReviewRequest(parsed, channel)) {
+						if (!validReviewRequest(parsed, channel) || parsed.request_id !== requestId) {
 							throw new Error("invalid review request or document path");
 						}
 						handleRequest(parsed, channel, ctx);
+						consumed = true;
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
+						try {
+							if (requestId) {
+								writeEvent(channel, {
+									type: "review_failed",
+									request_id: requestId,
+									message: `Review request rejected: ${message}`,
+								});
+							}
+							consumed = true;
+						} catch (ackError) {
+							ctx.ui.notify(`Leaf review could not acknowledge rejection: ${String(ackError)}`, "error");
+						}
 						ctx.ui.notify(`Leaf review request rejected: ${message}`, "error");
 					} finally {
-						try {
-							unlinkSync(requestPath);
-						} catch {
-							// A later poll can retry cleanup if the file still exists.
+						if (consumed) {
+							try {
+								unlinkSync(requestPath);
+							} catch {
+								// A later poll can retry cleanup if the file still exists.
+							}
 						}
 					}
 				}

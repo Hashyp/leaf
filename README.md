@@ -190,11 +190,11 @@ The review flow is:
 1. After a successful Pi `write` or `edit` of a Markdown file, the extension opens that file in a connected Leaf process. Shell-written Markdown files are detected when their path appears in the command; `/leaf-review <file.md>` is the explicit fallback.
 2. In Leaf, add one or more comments, save each composer with `Enter`, then press `s`. Leaf sends Pi the comment text together with the document revision, source line and text, rendered line/columns, selected word, and nearby source context.
 3. Leaf remains open and shows **Pi addressing …** while the agent edits the document.
-4. Watch mode reloads the newer file automatically. Comments confirmed by Pi are retained and shown with a green `✓ addressed`; unconfirmed comments return to draft so they can be resent.
+4. Watch mode reloads the newer file automatically. Comments confirmed by Pi are retained and shown with a green `✓ addressed`; unconfirmed comments return to draft so they can be resent. Each comment keeps its original target text, context, coordinates, and source revision across reloads, including when it is resent.
 
 This first protocol handles root-level comments only. Comment replies and discussion threads are intentionally out of scope.
 
-By default the extension uses `target/debug/leaf` from Pi's working directory or a `leaf` executable on `PATH`. Override that lookup with `LEAF_REVIEW_BIN=/path/to/leaf`. On Linux it opens a supported terminal automatically; set `LEAF_REVIEW_TERMINAL` to a known terminal executable or `LEAF_REVIEW_LAUNCHER` to a custom launcher that accepts the Leaf executable and its arguments.
+By default the extension uses `target/debug/leaf` from Pi's working directory or a `leaf` executable on `PATH`. Override that lookup with `LEAF_REVIEW_BIN=/path/to/leaf`. On Linux it opens a supported terminal automatically; set `LEAF_REVIEW_TERMINAL` to a known terminal executable or `LEAF_REVIEW_LAUNCHER` to a custom launcher that accepts the Leaf executable and its arguments. On Windows, install Windows Terminal (`wt`) or configure `LEAF_REVIEW_LAUNCHER`; Leaf does not pass document paths through `cmd.exe`. Quitting Leaf allows the next edit or `/leaf-review` command to open a fresh review window.
 
 ## Inline Mode
 

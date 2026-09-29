@@ -484,7 +484,8 @@ pub(super) fn handle_key_event(
                 app.open_path_popup();
             }
             KeyCode::Char('s') if app.is_review_bridge_connected() => {
-                state_changed = app.submit_review();
+                let previous_state = app.review_agent_state().clone();
+                state_changed = app.submit_review() || app.review_agent_state() != &previous_state;
             }
             KeyCode::Char('v') | KeyCode::Tab => {
                 state_changed = app.start_comment_cursor();

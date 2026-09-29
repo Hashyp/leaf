@@ -11,7 +11,10 @@ Run automated tests:
 
 ```bash
 cargo test
+node --test scripts/test-leaf-review.mjs
 ```
+
+The extension tests require Node.js with `node:module.stripTypeScriptTypes` support. They run the extension with a simulated Pi host and terminal launcher, real filesystem channels, and real process-liveness checks. They cover Windows launcher selection, rejected-request acknowledgments, closed-client reopening, and successful delivery/completion. Windows execution and the real TUI still require the manual checks below.
 
 Open the manual fixture from a file:
 
@@ -102,6 +105,10 @@ Ask Pi to create or edit a temporary Markdown file and confirm:
 - after Pi edits the file and calls `leaf_review_complete`, Leaf reloads the changed Markdown automatically
 - confirmed comments show a green `✓ addressed`; omitted or failed comments return to draft
 - ending the Pi session leaves Leaf open and changes its status to disconnected
+- saving a whole-line comment, inserting a line above it, and submitting or resending preserves the original target text/context and its `source_revision`
+- selecting the current file again in the picker preserves draft, submitted, and addressed comments
+- a request larger than 1 MiB is rejected before submission, leaving its comments editable
+- quitting Leaf and editing the same file or running `/leaf-review` opens a fresh review window
 
 Replies and comment threads are not part of this smoke test.
 

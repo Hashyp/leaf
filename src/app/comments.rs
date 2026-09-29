@@ -18,6 +18,14 @@ pub(crate) struct ReviewComment {
     pub(crate) selected_end_col: Option<usize>,
     pub(crate) body: String,
     pub(crate) status: ReviewCommentStatus,
+    snapshot: CommentTargetSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommentTargetSnapshot {
+    revision: String,
+    source_line_text: String,
+    context: Vec<ReviewContextLine>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +37,7 @@ pub(crate) struct CommentComposer {
     pub(crate) selected_end_col: Option<usize>,
     pub(crate) draft: String,
     pub(crate) editing_id: Option<u64>,
+    snapshot: CommentTargetSnapshot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,8 +191,37 @@ impl App {
             selected_end_col,
             draft: String::new(),
             editing_id: None,
+            snapshot: self.comment_target_snapshot(source_line),
         });
         true
+    }
+
+    fn comment_target_snapshot(&self, source_line: usize) -> CommentTargetSnapshot {
+        let source_lines = self.source.lines().collect::<Vec<_>>();
+        let source_index = source_line.saturating_sub(1);
+        let bounded_index = source_index.min(source_lines.len());
+        let context_start = bounded_index.saturating_sub(2);
+        let context_end = bounded_index.saturating_add(3).min(source_lines.len());
+        CommentTargetSnapshot {
+            revision: format!("{:016x}", hash_str(&self.source)),
+            source_line_text: source_lines
+                .get(source_index)
+                .copied()
+                .unwrap_or_default()
+                .to_string(),
+            context: source_lines[context_start..context_end]
+                .iter()
+                .enumerate()
+                .map(|(offset, text)| {
+                    let line = context_start + offset + 1;
+                    ReviewContextLine {
+                        source_line: line,
+                        text: (*text).to_string(),
+                        is_target: line == source_line,
+                    }
+                })
+                .collect(),
+        }
     }
 
     pub(crate) fn push_comment_char(&mut self, ch: char) {
@@ -244,6 +282,7 @@ impl App {
                 selected_end_col,
                 body,
                 status: ReviewCommentStatus::Draft,
+                snapshot: composer.snapshot.clone(),
             });
             id
         };
@@ -274,6 +313,7 @@ impl App {
             selected_end_col: comment.selected_end_col,
             draft: comment.body,
             editing_id: Some(comment.id),
+            snapshot: comment.snapshot,
         });
         true
     }
@@ -373,29 +413,9 @@ impl App {
             .and_then(|path| path.canonicalize().ok())
             .or_else(|| self.filepath.clone())
             .unwrap_or_default();
-        let source_lines = self.source.lines().collect::<Vec<_>>();
         let metadata = comments
             .iter()
             .map(|comment| {
-                let source_index = comment.source_line.saturating_sub(1);
-                let source_line_text = source_lines.get(source_index).copied().unwrap_or_default();
-                let bounded_source_index = source_index.min(source_lines.len());
-                let context_start = bounded_source_index.saturating_sub(2);
-                let context_end = bounded_source_index
-                    .saturating_add(3)
-                    .min(source_lines.len());
-                let context = source_lines[context_start..context_end]
-                    .iter()
-                    .enumerate()
-                    .map(|(offset, text)| {
-                        let source_line = context_start + offset + 1;
-                        ReviewContextLine {
-                            source_line,
-                            text: (*text).to_string(),
-                            is_target: source_line == comment.source_line,
-                        }
-                    })
-                    .collect();
                 let selection =
                     comment
                         .selected_text
@@ -417,11 +437,12 @@ impl App {
                     body: comment.body.clone(),
                     target: ReviewTargetMetadata {
                         source_line: comment.source_line,
-                        source_line_text: source_line_text.to_string(),
+                        source_line_text: comment.snapshot.source_line_text.clone(),
+                        source_revision: comment.snapshot.revision.clone(),
                         rendered_line: comment.rendered_line + 1,
                         selection,
                     },
-                    context,
+                    context: comment.snapshot.context.clone(),
                 }
             })
             .collect();

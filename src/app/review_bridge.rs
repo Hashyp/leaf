@@ -6,6 +6,7 @@ use std::{
 };
 
 pub(crate) const REVIEW_PROTOCOL_VERSION: u32 = 1;
+const MAX_REVIEW_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReviewCommentStatus {
@@ -94,6 +95,7 @@ pub(crate) struct ReviewCommentMetadata {
 pub(crate) struct ReviewTargetMetadata {
     pub(crate) source_line: usize,
     pub(crate) source_line_text: String,
+    pub(crate) source_revision: String,
     pub(crate) rendered_line: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) selection: Option<ReviewSelectionMetadata>,
@@ -106,7 +108,7 @@ pub(crate) struct ReviewSelectionMetadata {
     pub(crate) rendered_end_column_exclusive: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewContextLine {
     pub(crate) source_line: usize,
     pub(crate) text: String,
@@ -189,8 +191,15 @@ impl ReviewBridge {
     }
 
     pub(crate) fn publish_request(&self, request: &ReviewRequest) -> io::Result<()> {
+        let bytes = serde_json::to_vec_pretty(request).map_err(io::Error::other)?;
+        if bytes.len() > MAX_REVIEW_REQUEST_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Review exceeds 1 MiB; shorten comments or reduce the batch before sending",
+            ));
+        }
         let filename = format!("request-{}.json", request.request_id);
-        write_json_atomically(&self.requests_dir, &filename, request)
+        write_bytes_atomically(&self.requests_dir, &filename, &bytes)
     }
 
     pub(crate) fn poll_events(&self) -> Vec<Result<ReviewEvent, String>> {
@@ -261,6 +270,11 @@ fn write_json_atomically<T: Serialize>(
     filename: &str,
     value: &T,
 ) -> io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
+    write_bytes_atomically(directory, filename, &bytes)
+}
+
+fn write_bytes_atomically(directory: &Path, filename: &str, bytes: &[u8]) -> io::Result<()> {
     fs::create_dir_all(directory)?;
     let final_path = directory.join(filename);
     let temporary_path = directory.join(format!(
@@ -268,7 +282,6 @@ fn write_json_atomically<T: Serialize>(
         std::process::id(),
         now_ms()
     ));
-    let bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     fs::write(&temporary_path, bytes)?;
     match fs::rename(&temporary_path, &final_path) {
         Ok(()) => Ok(()),
