@@ -254,6 +254,55 @@ fn composer_renders_target_and_ephemeral_scope() {
 }
 
 #[test]
+fn composer_cursor_stays_at_input_origin_when_empty_and_cleared() {
+    let _guard = super::lock_theme_test_state();
+    let mut app = comment_app();
+    assert!(app.begin_comment_at_rendered_line(0));
+
+    let empty = draw(&mut app, 100, 24);
+    assert_eq!(empty.cell((17, 10)).unwrap().symbol(), "▌");
+    assert!(buffer_text(&empty).contains("▌Write a comment…"));
+    assert_eq!(
+        empty.cell((18, 10)).unwrap().fg,
+        crate::theme::app_theme().ui.toc_secondary_inactive
+    );
+
+    app.push_comment_char('x');
+    let typed = draw(&mut app, 100, 24);
+    assert_eq!(typed.cell((17, 10)).unwrap().symbol(), "x");
+    assert_eq!(typed.cell((18, 10)).unwrap().symbol(), "▌");
+    assert!(!buffer_text(&typed).contains("Write a comment…"));
+
+    app.pop_comment_char();
+    let cleared = draw(&mut app, 100, 24);
+    assert_eq!(cleared.cell((17, 10)).unwrap().symbol(), "▌");
+    assert!(buffer_text(&cleared).contains("▌Write a comment…"));
+}
+
+#[test]
+fn composer_cursor_follows_multiline_draft_and_trailing_newline() {
+    let _guard = super::lock_theme_test_state();
+    let mut app = comment_app();
+    assert!(app.begin_comment_at_rendered_line(0));
+    for ch in "x\n東京".chars() {
+        app.push_comment_char(ch);
+    }
+
+    let multiline = draw(&mut app, 100, 24);
+    assert_eq!(multiline.cell((17, 10)).unwrap().symbol(), "x");
+    assert_eq!(multiline.cell((18, 10)).unwrap().symbol(), " ");
+    assert_eq!(multiline.cell((17, 11)).unwrap().symbol(), "東");
+    assert_eq!(multiline.cell((19, 11)).unwrap().symbol(), "京");
+    assert_eq!(multiline.cell((21, 11)).unwrap().symbol(), "▌");
+    assert!(!buffer_text(&multiline).contains("Write a comment…"));
+
+    app.push_comment_char('\n');
+    let trailing_newline = draw(&mut app, 100, 24);
+    assert_eq!(trailing_newline.cell((21, 11)).unwrap().symbol(), " ");
+    assert_eq!(trailing_newline.cell((17, 12)).unwrap().symbol(), "▌");
+}
+
+#[test]
 fn connected_review_publishes_structured_metadata_and_marks_comments_submitted() {
     let root = unique_temp_dir("review-request");
     let document = root.join("review.md");

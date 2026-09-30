@@ -127,11 +127,11 @@ pub(super) fn render_comment_composer(f: &mut Frame, app: &App) {
 
     let input = if composer.draft.is_empty() {
         vec![Line::from(vec![
+            Span::styled("▌", Style::default().fg(theme.markdown.link_hover)),
             Span::styled(
                 "Write a comment…",
                 Style::default().fg(theme.ui.toc_secondary_inactive),
             ),
-            Span::styled("▌", Style::default().fg(theme.markdown.link_hover)),
         ])]
     } else {
         let mut lines = composer
