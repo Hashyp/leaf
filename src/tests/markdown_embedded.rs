@@ -1,5 +1,5 @@
 use super::{rendered_non_empty_lines, test_assets, test_md_theme};
-use crate::markdown::parse_markdown;
+use crate::markdown::{parse_markdown, parse_markdown_with_width};
 use crate::*;
 
 #[test]
@@ -74,6 +74,90 @@ fn inline_latex_is_searchable() {
 }
 
 #[test]
+fn superscript_fallback_keeps_caret() {
+    let (ss, theme) = test_assets();
+    let (lines, _, _, _) = parse_markdown(
+        "$n^{1-\\varepsilon}$\n",
+        &ss,
+        &theme,
+        &test_md_theme(),
+        false,
+        true,
+    )
+    .into();
+    let rendered: Vec<String> = lines.iter().map(line_plain_text).collect();
+
+    assert!(
+        rendered.iter().any(|line| line.contains("n^(1−ε)")),
+        "exponent without a superscript form should keep the caret, got {rendered:?}"
+    );
+}
+
+#[test]
+fn subscript_fallback_keeps_underscore() {
+    let (ss, theme) = test_assets();
+    let (lines, _, _, _) = parse_markdown(
+        "$x_{n\\to\\infty}$\n",
+        &ss,
+        &theme,
+        &test_md_theme(),
+        false,
+        true,
+    )
+    .into();
+    let rendered: Vec<String> = lines.iter().map(line_plain_text).collect();
+
+    assert!(
+        rendered.iter().any(|line| line.contains("x_(n→∞)")),
+        "index without a subscript form should keep the underscore, got {rendered:?}"
+    );
+}
+
+#[test]
+fn nested_script_fallback_keeps_both_markers() {
+    let (ss, theme) = test_assets();
+    let (lines, _, _, _) = parse_markdown(
+        "$e^{i\\pi}$ $\\int_{0}^{\\infty}$\n",
+        &ss,
+        &theme,
+        &test_md_theme(),
+        false,
+        true,
+    )
+    .into();
+    let rendered: Vec<String> = lines.iter().map(line_plain_text).collect();
+
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("e^(iπ)") && line.contains("∫₀^(∞)")),
+        "fallback must not read as multiplication or function application, got {rendered:?}"
+    );
+}
+
+#[test]
+fn convertible_scripts_stay_unicode() {
+    let (ss, theme) = test_assets();
+    let (lines, _, _, _) = parse_markdown(
+        "$n^{abc}$ $x_{max}$ $n^{3}$\n",
+        &ss,
+        &theme,
+        &test_md_theme(),
+        false,
+        true,
+    )
+    .into();
+    let rendered: Vec<String> = lines.iter().map(line_plain_text).collect();
+
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("nᵃᵇᶜ") && line.contains("xₘₐₓ") && line.contains("n³")),
+        "scripts with a Unicode form should not fall back, got {rendered:?}"
+    );
+}
+
+#[test]
 fn display_latex_in_blockquote_has_quote_prefix() {
     let (ss, theme) = test_assets();
     let (lines, _, _, _) =
@@ -119,6 +203,74 @@ fn mermaid_block_renders_in_framed_block() {
     assert!(
         rendered.iter().any(|line| line.contains("└")),
         "expected mermaid block footer"
+    );
+}
+
+#[test]
+fn oversized_horizontal_mermaid_reflows_vertically() {
+    let (ss, theme) = test_assets();
+    let src = "```mermaid\nflowchart LR\n  A[Collect request] --> B[Validate request] --> C[Store response]\n```\n";
+    let (lines, _, _, _) =
+        parse_markdown_with_width(src, &ss, &theme, 50, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+
+    assert!(
+        rendered.iter().all(|line| display_width(line) <= 50),
+        "responsive mermaid render should stay within the viewport: {rendered:?}"
+    );
+    assert!(
+        rendered.iter().all(|line| !line.contains("│1│")),
+        "an LR flowchart that fits vertically should remain rendered, not fall back to source"
+    );
+    assert!(
+        rendered.iter().any(|line| line.contains("Collect request"))
+            && rendered.iter().any(|line| line.contains("Store response")),
+        "responsive render should preserve node labels"
+    );
+}
+
+#[test]
+fn oversized_mermaid_falls_back_instead_of_wrapping_diagram_rows() {
+    let (ss, theme) = test_assets();
+    let src = format!(
+        "```mermaid\nflowchart TD\n  A[{}]\n```\n",
+        "oversized ".repeat(10)
+    );
+    let (lines, _, _, _) =
+        parse_markdown_with_width(&src, &ss, &theme, 50, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+
+    assert!(
+        rendered.iter().any(|line| line.contains("│1│")),
+        "a diagram that cannot fit in either orientation should show readable source"
+    );
+    assert!(
+        rendered.iter().any(|line| line.contains("flowchart TD")),
+        "fallback should retain the Mermaid source"
+    );
+}
+
+#[test]
+fn oversized_class_diagram_uses_vertical_cards() {
+    let (ss, theme) = test_assets();
+    let src = "```mermaid\nclassDiagram\n  class Client {\n    +BackendCapabilities capabilities\n    +from_profile()\n  }\n  class BackendAdapter {\n    <<Protocol>>\n    +invoke(OperationDef, input, deadline)\n  }\n  Client *-- BackendAdapter\n```\n";
+    let (lines, _, _, _) =
+        parse_markdown_with_width(src, &ss, &theme, 32, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+
+    assert!(
+        rendered.iter().all(|line| display_width(line) <= 32),
+        "vertical class cards should stay within the viewport: {rendered:?}"
+    );
+    assert!(
+        rendered.iter().all(|line| !line.contains("│1│")),
+        "a valid oversized class diagram should not fall back to source"
+    );
+    assert!(
+        rendered.iter().any(|line| line.contains("BackendAdapter"))
+            && rendered.iter().any(|line| line.contains("+invoke"))
+            && rendered.iter().any(|line| line.contains("Client *--")),
+        "vertical class rendering should preserve classes, members, and relationships"
     );
 }
 

@@ -2,11 +2,10 @@ use ratatui::{
     style::{Modifier, Style},
     text::Span,
 };
-use unicode_width::UnicodeWidthChar;
 
 use super::tables::{CellFragment, CellInlineStyle};
-use super::width::{display_width, expand_tabs};
-use super::LINK_MARKER;
+use super::width::{display_width, expand_tabs, iter_cluster_widths};
+use super::with_link_marker;
 
 pub(super) fn fragments_display_width(frags: &[CellFragment]) -> usize {
     frags.iter().map(|f| f.display_width()).sum()
@@ -120,6 +119,23 @@ fn rebuild_fragment(frag: &CellFragment, text: String) -> CellFragment {
     }
 }
 
+fn break_row(lines: &mut Vec<Vec<CellFragment>>, current_line: &mut Vec<CellFragment>) -> usize {
+    let marker = match current_line.last() {
+        Some(CellFragment::LinkMarker(_)) if current_line.len() > 1 => current_line.pop(),
+        _ => None,
+    };
+    if marker.is_some() {
+        if let Some(CellFragment::Text(t, _, _)) = current_line.last() {
+            if t == " " {
+                current_line.pop();
+            }
+        }
+    }
+    lines.push(std::mem::take(current_line));
+    current_line.extend(marker);
+    current_line.iter().map(CellFragment::display_width).sum()
+}
+
 pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<CellFragment>> {
     if width == 0 {
         return vec![vec![]];
@@ -145,26 +161,26 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                     let word_width = display_width(word);
 
                     if word_width > width {
-                        if !current_line.is_empty() || current_width > 0 {
-                            lines.push(std::mem::take(&mut current_line));
-                            current_width = 0;
+                        if !matches!(current_line.as_slice(), [] | [CellFragment::LinkMarker(_)]) {
+                            current_width = break_row(&mut lines, &mut current_line);
                         }
                         glue = false;
                         first_word = false;
                         let mut chunk = String::new();
-                        let mut chunk_width = 0usize;
-                        for ch in word.chars() {
-                            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-                            if chunk_width + ch_width > width && !chunk.is_empty() {
-                                lines.push(vec![CellFragment::Text(
+                        let mut chunk_width = current_width;
+                        for (cluster, cluster_w) in iter_cluster_widths(word) {
+                            if chunk_width + cluster_w > width && !chunk.is_empty() {
+                                let mut row = std::mem::take(&mut current_line);
+                                row.push(CellFragment::Text(
                                     std::mem::take(&mut chunk),
                                     style,
                                     false,
-                                )]);
+                                ));
+                                lines.push(row);
                                 chunk_width = 0;
                             }
-                            chunk.push(ch);
-                            chunk_width += ch_width;
+                            chunk.push_str(cluster);
+                            chunk_width += cluster_w;
                         }
                         if !chunk.is_empty() {
                             current_line.push(CellFragment::Text(chunk, style, false));
@@ -179,10 +195,13 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                     glue = false;
                     let sep = if needs_sep { 1 } else { 0 };
                     if current_width + sep + word_width > width && current_width > 0 {
-                        lines.push(std::mem::take(&mut current_line));
-                        current_width = 0;
+                        current_width = break_row(&mut lines, &mut current_line);
                     } else if needs_sep {
-                        current_line.push(CellFragment::Text(" ".to_string(), style, false));
+                        current_line.push(CellFragment::Text(
+                            " ".to_string(),
+                            CellInlineStyle::default(),
+                            false,
+                        ));
                         current_width += 1;
                     }
                     current_line.push(CellFragment::Text(word.to_string(), style, false));
@@ -190,7 +209,9 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                 }
             }
             CellFragment::LinkMarker(_) => {
-                if current_width + 1 > width && current_width > 0 {
+                let marker_width = with_link_marker(display_width);
+                let sep = if current_width == 0 { 0 } else { 1 };
+                if current_width + sep + marker_width > width && current_width > 0 {
                     lines.push(std::mem::take(&mut current_line));
                     current_width = 0;
                 }
@@ -199,8 +220,13 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                     current_width += 1;
                 }
                 current_line.push(frag.clone());
-                current_width += 1;
+                current_width += marker_width;
                 glue = true;
+            }
+            CellFragment::HardBreak => {
+                lines.push(std::mem::take(&mut current_line));
+                current_width = 0;
+                glue = false;
             }
             CellFragment::Code(_, adj)
             | CellFragment::InlineMath(_, adj)
@@ -218,14 +244,13 @@ pub(super) fn wrap_table_cell(frags: &[CellFragment], width: usize) -> Vec<Vec<C
                     let inner = width.saturating_sub(2).max(1);
                     let mut chunk = String::new();
                     let mut chunk_width = 0usize;
-                    for ch in text.chars() {
-                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-                        if chunk_width + ch_width > inner && !chunk.is_empty() {
+                    for (cluster, cluster_w) in iter_cluster_widths(&text) {
+                        if chunk_width + cluster_w > inner && !chunk.is_empty() {
                             lines.push(vec![rebuild_fragment(frag, std::mem::take(&mut chunk))]);
                             chunk_width = 0;
                         }
-                        chunk.push(ch);
-                        chunk_width += ch_width;
+                        chunk.push_str(cluster);
+                        chunk_width += cluster_w;
                     }
                     if !chunk.is_empty() {
                         current_line.push(rebuild_fragment(frag, chunk));
@@ -275,17 +300,20 @@ pub(super) fn align_cell(
                 let expanded = expand_tabs(t, 0);
                 content_width += display_width(&expanded);
                 let mut style = base_style;
-                if inline.bold {
+                if inline.bold > 0 {
                     style = style.add_modifier(Modifier::BOLD);
                     if !is_header {
                         style = style.fg(theme.strong_text);
                     }
                 }
-                if inline.italic {
+                if inline.italic > 0 {
                     style = style.add_modifier(Modifier::ITALIC);
                 }
-                if inline.strikethrough {
+                if inline.strikethrough > 0 {
                     style = style.add_modifier(Modifier::CROSSED_OUT);
+                }
+                if inline.underline > 0 {
+                    style = style.add_modifier(Modifier::UNDERLINED);
                 }
                 if inline.link {
                     style = style.fg(theme.link_text).add_modifier(Modifier::UNDERLINED);
@@ -293,12 +321,15 @@ pub(super) fn align_cell(
                 spans.push(Span::styled(expanded, style));
             }
             CellFragment::LinkMarker(inline) => {
-                let style = Style::default()
-                    .fg(theme.link_icon)
-                    .add_modifier(inline.modifiers());
-                spans.push(Span::styled(LINK_MARKER, style));
-                content_width += display_width(LINK_MARKER);
+                with_link_marker(|marker| {
+                    let style = Style::default()
+                        .fg(theme.link_icon)
+                        .add_modifier(inline.modifiers());
+                    content_width += display_width(marker);
+                    spans.push(Span::styled(marker.to_string(), style));
+                });
             }
+            CellFragment::HardBreak => {}
             CellFragment::Code(_, _)
             | CellFragment::InlineMath(_, _)
             | CellFragment::Mark(_, _) => {

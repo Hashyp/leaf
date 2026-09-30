@@ -36,14 +36,14 @@ theme = "ocean"
 # For paths with spaces AND arguments, use inner quotes:
 # editor = '"C:\Program Files\Notepad++\notepad++.exe" --some-flag'
 #
-# Use {$line} to open the editor at the first visible source line at Ctrl+E:
+# Use {$line} to open the editor at the viewport middle line (Ctrl+E):
 # editor = 'nano +{$line}'
 # editor = 'nvim +{$line} +"normal! zz"'
 #
 # Also, {$path} offers more customization options:
 # editor = 'code -g {$path}:{$line}'
 #
-# Priority: --editor flag > LEAF_EDITOR > this setting > nano (notepad on Windows)
+# Priority: --editor flag > LEAF_EDITOR > this setting > EDITOR > nano (notepad on Windows)
 # editor = "nano"
 
 # Maximum content width (number of columns)
@@ -77,6 +77,13 @@ watch = false
 # Default: "78cells"
 # file-picker-width = "78cells"
 
+# Show line numbers in the main document by default
+# Can still be toggled interactively with 'l' or 'Shift+L'.
+# Priority: LEAF_MAIN_LINE_NUMBERS > this setting > default (false)
+# Accepted env values: 1 = true, 0 = false (other values ignored)
+# Default: false
+# main-line-numbers = false
+
 # Show line numbers inside fenced code blocks
 # Only affects code block gutters, the main document line numbers are independent.
 # Priority: LEAF_CODE_LINE_NUMBERS > this setting > default (true)
@@ -97,3 +104,8 @@ watch = false
 # Maximum accepted: 50. Values above are clamped.
 # Default: 0 (disables history recording)
 # file-history-length = 0
+
+# Prefix shown before Markdown link text, like #leaf for [leaf](url)
+# Any single non-space character. Set to "" to show no prefix.
+# Default: "#"
+# hyper-link-prefix = "#"

@@ -22,7 +22,9 @@ pub(crate) use syntax::resolve_syntax;
 use tables::{handle_table_event, start_table, TableBuf};
 #[cfg(test)]
 pub(crate) use width::line_plain_text;
-pub(crate) use width::{build_searchable_lines, display_width, truncate_display_width};
+pub(crate) use width::{
+    build_searchable_lines, display_width, iter_cluster_widths, truncate_display_width,
+};
 
 use crate::theme::MarkdownTheme;
 use pulldown_cmark::{
@@ -55,11 +57,26 @@ use lists::{
 pub(crate) use lists::{TASK_CHECKED, TASK_CHECKED_ALT, TASK_UNCHECKED};
 use markers::push_custom_marker_spans;
 use spans::{
-    handle_inline_style_event, inline_text_style, push_inline_code_span, push_inline_latex_span,
-    InlineStyleState,
+    handle_html_tag_event, handle_inline_style_event, inline_text_style, push_inline_code_span,
+    push_inline_latex_span, push_mark_span, HtmlBufferKind, HtmlTagOutcome, InlineStyleState,
 };
 
-const LINK_MARKER: &str = "#";
+pub(crate) const DEFAULT_LINK_MARKER: &str = "#";
+
+thread_local! {
+    static LINK_MARKER: std::cell::RefCell<String> =
+        std::cell::RefCell::new(DEFAULT_LINK_MARKER.to_string());
+}
+
+pub(crate) fn with_link_marker<R>(f: impl FnOnce(&str) -> R) -> R {
+    LINK_MARKER.with(|c| f(&c.borrow()))
+}
+
+pub(crate) fn set_link_marker(marker: &str) {
+    LINK_MARKER.with(|c| {
+        c.borrow_mut().replace_range(.., marker);
+    });
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LastBlock {
@@ -256,6 +273,30 @@ fn rule_width(render_width: usize, indent: usize) -> usize {
 
 const CUSTOM_MARKERS: &[markers::CustomMarker] = &[markers::MARK_MARKER];
 
+fn flush_html_style_buffer(
+    buffer: &mut Option<(HtmlBufferKind, String)>,
+    spans: &mut Vec<Span<'static>>,
+    theme: &MarkdownTheme,
+) {
+    if let Some((kind, text)) = buffer.take() {
+        match kind {
+            HtmlBufferKind::Mark => push_mark_span(spans, &text, theme),
+            HtmlBufferKind::Code => push_inline_code_span(spans, &text, theme),
+        }
+    }
+}
+
+fn close_inline_block(
+    buffer: &mut Option<(HtmlBufferKind, String)>,
+    spans: &mut Vec<Span<'static>>,
+    inline: &mut InlineStyleState,
+    theme: &MarkdownTheme,
+) {
+    flush_html_style_buffer(buffer, spans, theme);
+    inline.reset_html_counters();
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_text_event(
     spans: &mut Vec<Span<'static>>,
     code_buf: &mut String,
@@ -264,9 +305,18 @@ fn push_text_event(
     theme: &MarkdownTheme,
     blockquote_depth: usize,
     inline: InlineStyleState,
+    html_style_buffer: &mut Option<(HtmlBufferKind, String)>,
 ) {
+    if text.is_empty() {
+        return;
+    }
     if in_code {
         code_buf.push_str(text);
+        return;
+    }
+
+    if let Some((_, buf)) = html_style_buffer.as_mut() {
+        buf.push_str(text);
         return;
     }
 
@@ -384,6 +434,7 @@ pub(crate) fn parse_markdown_with_width(
     let mut code_blocks: Vec<CodeBlockInfo> = Vec::new();
     let mut blockquote_depth = 0usize;
     let mut inline = InlineStyleState::default();
+    let mut html_style_buffer: Option<(HtmlBufferKind, String)> = None;
     let mut list_stack: Vec<ListKind> = Vec::new();
     let mut item_stack: Vec<ItemState> = Vec::new();
     let mut table: Option<TableBuf> = None;
@@ -437,6 +488,12 @@ pub(crate) fn parse_markdown_with_width(
                 start_heading(&mut in_heading, level);
             }
             MdEvent::End(TagEnd::Heading(_)) => {
+                close_inline_block(
+                    &mut html_style_buffer,
+                    &mut spans,
+                    &mut inline,
+                    theme_colors,
+                );
                 end_heading(
                     &mut lines,
                     &mut toc,
@@ -449,6 +506,12 @@ pub(crate) fn parse_markdown_with_width(
             }
             MdEvent::Start(Tag::Paragraph) => {}
             MdEvent::End(TagEnd::Paragraph) => {
+                close_inline_block(
+                    &mut html_style_buffer,
+                    &mut spans,
+                    &mut inline,
+                    theme_colors,
+                );
                 end_paragraph(
                     &mut lines,
                     &mut spans,
@@ -555,7 +618,11 @@ pub(crate) fn parse_markdown_with_width(
                 last_block = LastBlock::Other;
             }
             MdEvent::Code(text) => {
-                push_inline_code_span(&mut spans, text.as_ref(), theme_colors);
+                if let Some((_, buf)) = html_style_buffer.as_mut() {
+                    buf.push_str(text.as_ref());
+                } else {
+                    push_inline_code_span(&mut spans, text.as_ref(), theme_colors);
+                }
             }
             MdEvent::Start(Tag::BlockQuote(kind)) => {
                 if flush_pending_inline_if_any(
@@ -605,6 +672,12 @@ pub(crate) fn parse_markdown_with_width(
                 }
             }
             MdEvent::End(TagEnd::BlockQuote(_)) => {
+                close_inline_block(
+                    &mut html_style_buffer,
+                    &mut spans,
+                    &mut inline,
+                    theme_colors,
+                );
                 end_blockquote(
                     &mut lines,
                     &mut spans,
@@ -640,6 +713,12 @@ pub(crate) fn parse_markdown_with_width(
                 start_item(&mut item_stack, blockquote_depth);
             }
             MdEvent::End(TagEnd::Item) => {
+                close_inline_block(
+                    &mut html_style_buffer,
+                    &mut spans,
+                    &mut inline,
+                    theme_colors,
+                );
                 end_item(
                     &mut lines,
                     &mut spans,
@@ -666,6 +745,7 @@ pub(crate) fn parse_markdown_with_width(
                     theme_colors,
                     blockquote_depth,
                     inline,
+                    &mut html_style_buffer,
                 );
             }
             MdEvent::SoftBreak | MdEvent::HardBreak if !in_code => {
@@ -682,6 +762,51 @@ pub(crate) fn parse_markdown_with_width(
                 wraps = true;
             }
             MdEvent::SoftBreak | MdEvent::HardBreak => {}
+            MdEvent::InlineHtml(raw) if !in_code => {
+                match handle_html_tag_event(raw.as_ref(), &mut inline, &mut spans) {
+                    HtmlTagOutcome::Consumed => {}
+                    HtmlTagOutcome::OpenStyleBuffer(kind) => {
+                        if html_style_buffer.is_none() {
+                            html_style_buffer = Some((kind, String::new()));
+                        }
+                    }
+                    HtmlTagOutcome::CloseStyleBuffer(kind) => {
+                        if matches!(&html_style_buffer, Some((k, _)) if *k == kind) {
+                            flush_html_style_buffer(
+                                &mut html_style_buffer,
+                                &mut spans,
+                                theme_colors,
+                            );
+                        }
+                    }
+                    HtmlTagOutcome::HardBreak => {
+                        flush_html_style_buffer(&mut html_style_buffer, &mut spans, theme_colors);
+                        flush_wrapped_spans(
+                            &mut lines,
+                            &mut spans,
+                            blockquote_depth,
+                            &list_stack,
+                            &mut item_stack,
+                            render_width,
+                            theme_colors,
+                            blockquote_color,
+                        );
+                        wraps = true;
+                    }
+                    HtmlTagOutcome::NotRecognized => {
+                        push_text_event(
+                            &mut spans,
+                            &mut code_buf,
+                            raw.as_ref(),
+                            in_code,
+                            theme_colors,
+                            blockquote_depth,
+                            inline,
+                            &mut html_style_buffer,
+                        );
+                    }
+                }
+            }
             MdEvent::InlineMath(text) => {
                 push_inline_latex_span(&mut spans, text.as_ref(), theme_colors);
             }

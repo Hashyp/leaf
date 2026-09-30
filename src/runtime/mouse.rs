@@ -4,6 +4,7 @@ use crate::{
     editor::{self, classify, open_in_editor, split_editor_cmd, EditorResult},
     markdown::display_width,
     render::{COMMENT_GUTTER_WIDTH, CONTENT_HORIZONTAL_PADDING, SCROLLBAR_WIDTH},
+    terminal::TerminalSession,
 };
 use anyhow::Result;
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -283,8 +284,10 @@ pub(super) fn handle_open_in_editor(
 
     let editor_cmd = match app.editor_config() {
         Some(e) => {
-            let visible_source_line = app.source_line_at(app.scroll());
-            editor::expand_editor_placeholders(e, visible_source_line, &filepath)
+            let content_height = app.content_area.height as usize;
+            let mid = (app.scroll() + content_height / 2).min(app.total().saturating_sub(1));
+            let middle_source_line = app.source_line_at(mid);
+            editor::expand_editor_placeholders(e, middle_source_line, &filepath)
         }
         None => {
             app.set_editor_flash(EditorFlash::EditorNotFound("no editor configured".into()));
@@ -329,16 +332,16 @@ fn try_open_editor(
         }
         Ok(EditorResult::NeedsSameTerminal) => {
             let (bin, args) = split_editor_cmd(editor_cmd);
-            crossterm::terminal::disable_raw_mode()?;
-            crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+            let mouse_capture = app.is_mouse_capture_enabled();
+            let mut stdout = io::stdout();
+            TerminalSession::suspend(&mut stdout, mouse_capture)?;
 
             let status = std::process::Command::new(bin)
                 .args(&args)
                 .arg(filepath)
                 .status();
 
-            crossterm::terminal::enable_raw_mode()?;
-            crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+            TerminalSession::resume(&mut stdout, mouse_capture)?;
             terminal.clear()?;
             app.reload(ss, themes);
 

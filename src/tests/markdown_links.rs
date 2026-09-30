@@ -284,3 +284,110 @@ fn php_code_block_without_open_tag_is_highlighted() {
         "php block without <?php should highlight keywords and variables differently"
     );
 }
+
+struct LinkMarkerGuard;
+
+impl LinkMarkerGuard {
+    fn set(marker: &str) -> Self {
+        crate::markdown::set_link_marker(marker);
+        Self
+    }
+}
+
+impl Drop for LinkMarkerGuard {
+    fn drop(&mut self) {
+        crate::markdown::set_link_marker(crate::markdown::DEFAULT_LINK_MARKER);
+    }
+}
+
+fn link_texts(md: &str, width: usize) -> Vec<(String, String)> {
+    let (ss, theme) = test_assets();
+    let (lines, _, link_spans, _) = crate::markdown::parse_markdown_with_width(
+        md,
+        &ss,
+        &theme,
+        width,
+        &test_md_theme(),
+        false,
+        true,
+    )
+    .into();
+    link_spans
+        .iter()
+        .map(|ls| {
+            let text = crate::markdown::line_plain_text(&lines[ls.line_idx]);
+            let clicked: String = text
+                .chars()
+                .skip(ls.start_col)
+                .take(ls.end_col - ls.start_col)
+                .collect();
+            (clicked, ls.url.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn custom_link_prefix_replaces_marker() {
+    let _guard = LinkMarkerGuard::set("→");
+    let links = link_texts("see [leaf](https://a.example)\n", 80);
+    assert_eq!(links, vec![("→leaf".into(), "https://a.example".into())]);
+}
+
+#[test]
+fn empty_link_prefix_keeps_links_clickable() {
+    let _guard = LinkMarkerGuard::set("");
+    let md = "\
+aaaaaaaaaaaaaaaaaaaaaaaaaaa [xyzxyzxyz](https://a.example) and [second](https://b.example)
+
+| col |
+| --- |
+| [cell](https://c.example) |
+";
+    let links = link_texts(md, 30);
+    let expected: Vec<(String, String)> = [
+        ("xyzxyzxyz", "https://a.example"),
+        ("second", "https://b.example"),
+        ("cell", "https://c.example"),
+    ]
+    .into_iter()
+    .map(|(t, u)| (t.into(), u.into()))
+    .collect();
+    assert_eq!(links, expected);
+}
+
+#[test]
+fn empty_link_prefix_keeps_wrapped_table_links_clickable() {
+    let _guard = LinkMarkerGuard::set("");
+    let md = "\
+| a | b |
+| --- | --- |
+| x | lead [label](https://a.example) and [averyveryverylonglabel](https://b.example) |
+";
+    let links = link_texts(md, 24);
+    let urls: Vec<&str> = links.iter().map(|(_, u)| u.as_str()).collect();
+    assert_eq!(
+        urls,
+        ["https://a.example", "https://b.example"],
+        "{links:?}"
+    );
+    assert!(links.iter().all(|(t, _)| !t.trim().is_empty()), "{links:?}");
+}
+
+#[test]
+fn empty_link_prefix_keeps_code_label_clickable() {
+    let _guard = LinkMarkerGuard::set("");
+    let links = link_texts("see [`code`](https://a.example) end\n", 80);
+    assert_eq!(links, vec![(" code ".into(), "https://a.example".into())]);
+}
+
+#[test]
+fn empty_link_prefix_keeps_urls_aligned_after_empty_label() {
+    let _guard = LinkMarkerGuard::set("");
+    let md =
+        "[](https://a.example) [label](https://b.example) some filler words to force wrapping\n";
+    let links = link_texts(md, 20);
+    assert_eq!(
+        links.last(),
+        Some(&("label".into(), "https://b.example".into()))
+    );
+}

@@ -6,7 +6,7 @@ use ratatui::{
 use std::{borrow::Cow, ops::Range};
 
 use super::width;
-use super::LINK_MARKER;
+use super::with_link_marker;
 
 pub(super) fn find_match_char_ranges(
     text_chars: &[char],
@@ -51,12 +51,21 @@ pub(super) fn overlapping_ranges(ranges: &[Range<usize>], start: usize, end: usi
 }
 
 pub(crate) fn highlight_line<'a>(line: &Line<'a>, theme: &MarkdownTheme, query: &str) -> Line<'a> {
+    with_link_marker(|marker| highlight_line_with_marker(line, theme, query, marker))
+}
+
+fn highlight_line_with_marker<'a>(
+    line: &Line<'a>,
+    theme: &MarkdownTheme,
+    query: &str,
+    marker: &str,
+) -> Line<'a> {
     let spans = &line.spans;
     let content_start = content_span_start(spans);
 
     let text_chars: Vec<char> = spans[content_start..]
         .iter()
-        .filter(|s| s.content.as_ref() != LINK_MARKER)
+        .filter(|s| s.content.as_ref() != marker)
         .flat_map(|s| s.content.chars())
         .collect();
     let query_lower: Vec<Vec<char>> = query.chars().map(|c| c.to_lowercase().collect()).collect();
@@ -77,7 +86,7 @@ pub(crate) fn highlight_line<'a>(line: &Line<'a>, theme: &MarkdownTheme, query: 
 
     let mut char_offset: usize = 0;
     for span in &spans[content_start..] {
-        if span.content.as_ref() == LINK_MARKER {
+        if span.content.as_ref() == marker {
             result.push(span.clone());
             continue;
         }

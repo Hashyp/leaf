@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Context;
 use serde::{Deserialize, Deserializer};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::picker_width::{parse_picker_width_spec, PickerWidthSpec};
 use crate::theme::{resolve_theme_selection, CustomThemeConfig};
@@ -20,6 +21,8 @@ pub(crate) struct LeafConfig {
     pub(crate) watch: Option<bool>,
     pub(crate) width: Option<usize>,
     pub(crate) extras: Vec<String>,
+    #[serde(rename = "main-line-numbers")]
+    pub(crate) main_line_numbers: Option<bool>,
     #[serde(rename = "code-line-numbers")]
     pub(crate) code_line_numbers: Option<bool>,
     #[serde(
@@ -37,6 +40,8 @@ pub(crate) struct LeafConfig {
         deserialize_with = "deserialize_lenient_i32"
     )]
     pub(crate) file_history_length: Option<i32>,
+    #[serde(rename = "hyper-link-prefix")]
+    pub(crate) hyper_link_prefix: Option<String>,
     pub(crate) themes: BTreeMap<String, CustomThemeConfig>,
     #[serde(skip)]
     pub(crate) config_dir: Option<PathBuf>,
@@ -66,6 +71,10 @@ where
 pub(crate) struct CliOverrides {
     pub(crate) width: Option<usize>,
     pub(crate) theme: Option<String>,
+}
+
+pub(crate) fn is_valid_hyper_link_prefix(prefix: &str) -> bool {
+    prefix.graphemes(true).take(2).count() <= 1 && !prefix.chars().any(char::is_whitespace)
 }
 
 pub(crate) fn load_config(overrides: &CliOverrides) -> (LeafConfig, Option<String>) {
@@ -118,6 +127,17 @@ pub(crate) fn load_config(overrides: &CliOverrides) -> (LeafConfig, Option<Strin
                 warnings.push("tab-title-length is invalid, no truncation applied".to_string());
             }
         }
+    }
+
+    if config
+        .hyper_link_prefix
+        .as_deref()
+        .is_some_and(|p| !is_valid_hyper_link_prefix(p))
+    {
+        config.hyper_link_prefix = None;
+        warnings.push(
+            "hyper-link-prefix must be a single non-space character, using \"#\"".to_string(),
+        );
     }
 
     let warning = if warnings.is_empty() {

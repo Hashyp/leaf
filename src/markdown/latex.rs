@@ -129,7 +129,7 @@ fn postprocess(input: &str) -> String {
         }
 
         if input[i..].starts_with("^{") {
-            if let Some((output, end)) = convert_script(input, i + 2, to_superscript) {
+            if let Some((output, end)) = convert_script(input, i + 2, ScriptKind::Superscript) {
                 result.push_str(&output);
                 i = end;
                 continue;
@@ -140,7 +140,7 @@ fn postprocess(input: &str) -> String {
         }
 
         if input[i..].starts_with("_{") {
-            if let Some((output, end)) = convert_script(input, i + 2, to_subscript) {
+            if let Some((output, end)) = convert_script(input, i + 2, ScriptKind::Subscript) {
                 result.push_str(&output);
                 i = end;
                 continue;
@@ -204,23 +204,40 @@ fn wrap_if_multi(out: &mut String, s: &str) {
     }
 }
 
-fn convert_script(
-    input: &str,
-    brace_start: usize,
-    mapper: fn(char) -> char,
-) -> Option<(String, usize)> {
+#[derive(Clone, Copy)]
+enum ScriptKind {
+    Superscript,
+    Subscript,
+}
+
+impl ScriptKind {
+    fn marker(self) -> char {
+        match self {
+            Self::Superscript => '^',
+            Self::Subscript => '_',
+        }
+    }
+
+    fn convert(self, ch: char) -> char {
+        match self {
+            Self::Superscript => to_superscript(ch),
+            Self::Subscript => to_subscript(ch),
+        }
+    }
+}
+
+fn convert_script(input: &str, brace_start: usize, kind: ScriptKind) -> Option<(String, usize)> {
     let (group, end) = read_brace_group(input, brace_start)?;
     let group = postprocess(group);
-    let mapped: String = group.chars().map(mapper).collect();
-    let all_converted = mapped
-        .chars()
-        .zip(group.chars())
-        .all(|(m, g)| m != g || g.is_ascii_digit());
-    if all_converted {
-        Some((mapped, end))
-    } else {
-        Some((format!("({group})"), end))
+    let mut mapped = String::with_capacity(group.len());
+    for g in group.chars() {
+        let m = kind.convert(g);
+        if m == g && !g.is_ascii_digit() {
+            return Some((format!("{}({group})", kind.marker()), end));
+        }
+        mapped.push(m);
     }
+    Some((mapped, end))
 }
 
 fn read_brace_group(input: &str, start: usize) -> Option<(&str, usize)> {

@@ -211,3 +211,37 @@ fn table_long_inline_code_wraps_without_clipping() {
         "wrapped code must preserve all characters"
     );
 }
+
+#[test]
+fn table_link_after_text_keeps_row_width() {
+    let (ss, theme) = test_assets();
+    let md = "| Name | Link |\n|------|------|\n| foo | x [alpha beta gamma delta epsilon zeta](https://example.com) and [more](https://example.com) |\n| bar | plain text here |\n";
+    let (lines, _, _, _) =
+        parse_markdown_with_width(md, &ss, &theme, 20, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+    let widths: Vec<usize> = rendered.iter().map(|line| display_width(line)).collect();
+
+    assert!(
+        widths.iter().all(|&w| w == widths[0]),
+        "table rows should share one width, got {widths:?}"
+    );
+}
+
+#[test]
+fn table_cell_with_vs16_emoji_fits_render_width() {
+    let (ss, theme) = test_assets();
+    let md = "| A | B |\n|---|---|\n| 🍀️ text long enough to wrap | short |\n";
+    let width = 30;
+    let (lines, _, _, _) =
+        parse_markdown_with_width(md, &ss, &theme, width, &test_md_theme(), false, true).into();
+    let rendered = rendered_non_empty_lines(&lines);
+    assert!(!rendered.is_empty());
+    for line in &rendered {
+        assert!(
+            display_width(line) <= width,
+            "table line wider than {width}: {:?} width={}",
+            line,
+            display_width(line)
+        );
+    }
+}

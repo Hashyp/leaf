@@ -259,9 +259,11 @@ watch = false              # auto-reload when opening a file
 width = 80                 # maximum content width (min: 20, default: terminal width)
 extras = ["txt", "rs"]     # extra file types shown in the picker
 file-picker-width = "75%"  # width of the file picker (fuzzy + file browser)
+main-line-numbers = false  # show line numbers in the main document by default
 code-line-numbers = true   # show line numbers inside fenced code blocks
 tab-title-length = -1      # terminal tab title truncation (min: 20, -1: no truncation)
 file-history-length = 0    # recent file history length (0 disables, max: 50)
+hyper-link-prefix = "#"    # single character before link text ("" for none)
 ```
 
 To reset the configuration to defaults:
@@ -380,6 +382,7 @@ See [`gruvbox.toml`](gruvbox.toml) for a complete example with all available col
 - **Frontmatter support** : *YAML frontmatter rendered as a table (horizontal or vertical based on key count)*.
 - **Rich Markdown rendering** : *Tables, lists, blockquotes, rules, bold, italic, and strikethrough*.
 - **GitHub extras** : *Alert callouts, task list checkboxes, and `==mark==` text highlighting*.
+- **Inline HTML tags** : *Common inline formatting tags (`<b>`, `<i>`, `<u>`, ...) rendered with proper styling*.
 - **Extra file types** : *Open any file; code files get syntax highlighting, text files render as Markdown*.
 - **Syntax highlighting** : *Common aliases like `py`, `cpp`, `json`, `toml`, `ps1`, `dockerfile`*.
 - **Line numbers** : *Toggle display with `Shift+L`, jump to a line with `Ctrl+L` or `:`*.

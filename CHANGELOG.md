@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- next-version -->
 
+## [[1.28.3](https://github.com/RivoLink/leaf/releases/tag/1.28.3)] - 2026-09-28
+
+### Fixed
+
+- keep latex script markers ([#303](https://github.com/RivoLink/leaf/pull/303))
+- editor line middle viewport ([#300](https://github.com/RivoLink/leaf/pull/300))
+- mouse capture symmetry ([#299](https://github.com/RivoLink/leaf/pull/299))
+- mouse capture after editor ([#293](https://github.com/RivoLink/leaf/pull/293))
+- responsive mermaid layout ([#288](https://github.com/RivoLink/leaf/pull/288))
+- wrap graphemes emoji vs16 ([#283](https://github.com/RivoLink/leaf/pull/283))
+- skip invalid mark pairs ([#281](https://github.com/RivoLink/leaf/pull/281))
+- table link marker overflow ([#275](https://github.com/RivoLink/leaf/pull/275))
+- rustls cargo audit error ([#276](https://github.com/RivoLink/leaf/pull/276))
+
+### Changed
+
+- setup pr-check workflow ([#308](https://github.com/RivoLink/leaf/pull/308))
+- hyper link prefix config ([#304](https://github.com/RivoLink/leaf/pull/304))
+- warn unsigned commit ([#302](https://github.com/RivoLink/leaf/pull/302))
+- document line numbers ([#291](https://github.com/RivoLink/leaf/pull/291))
+- support inline html tags ([#290](https://github.com/RivoLink/leaf/pull/290))
+- support editor env var ([#289](https://github.com/RivoLink/leaf/pull/289))
+
 ## [[1.28.2](https://github.com/RivoLink/leaf/releases/tag/1.28.2)] - 2026-09-14
 
 ### Docs
